@@ -19,7 +19,6 @@ class ICADataGenerator(DataGenerator):
 
     def __init__(
         self,
-        m: int,
         n: int,
         seed: int,
         p: int,
@@ -31,21 +30,21 @@ class ICADataGenerator(DataGenerator):
             raise ValueError("p must be positive.")
         self.p = int(p)
         self.A: Tensor
-        self.sources: Tensor
-        super().__init__(m, n, seed, device=device, dtype=dtype)
-
-    def generate(self) -> Tensor:
+        self.sources: Tensor | None = None
+        super().__init__(n, seed, device=device, dtype=dtype)
         self.A = torch.randn(
             (self.n, self.p),
-            generator=self.generator,
+            generator=self._make_generator(self.seed),
             device=self.device,
             dtype=self.dtype,
         )
+
+    def _sample(self, m: int, generator: torch.Generator) -> Tensor:
         signs = torch.randint(
             low=0,
             high=2,
-            size=(self.m, self.p),
-            generator=self.generator,
+            size=(m, self.p),
+            generator=generator,
             device=self.device,
         )
         r = signs.to(dtype=self.dtype).mul_(2).sub_(1)

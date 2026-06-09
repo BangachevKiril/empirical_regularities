@@ -30,6 +30,15 @@ python -m inference_models.smoke_test_relu_mlp
 python -m data_generators.smoke_test_ica
 ```
 
+## ICA generator
+
+```python
+from data_generators import ICADataGenerator
+
+generator = ICADataGenerator(n=128, seed=1234, p=32, device="cuda")
+dataset = generator.sample(m=1024, seed_=0)
+```
+
 On a GPU node:
 
 ```bash
