@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+<style>
+text { font-family: Arial, Helvetica, sans-serif; fill: #172033; }
+.title { font-size: 25px; font-weight: 700; }
+.label { font-size: 16px; font-weight: 600; }
+.tick { font-size: 13px; fill: #526071; }
+.legend { font-size: 14px; font-weight: 600; }
+.grid { stroke: #d8dee8; stroke-width: 1; }
+.axis { stroke: #172033; stroke-width: 1.4; }
+.line { fill: none; stroke-width: 3; }
+.point { stroke: white; stroke-width: 1.5; }
+</style>
+<rect width="960" height="640" fill="#ffffff"/>
+<text class="title" x="480" y="38" text-anchor="middle">MLP Activation Effective Rank</text>
+<line class="axis" x1="96" y1="536" x2="924" y2="536"/>
+<line class="axis" x1="96" y1="68" x2="96" y2="536"/>
+<line class="grid" x1="96.00" y1="68" x2="96.00" y2="536"/>
+<line class="axis" x1="96.00" y1="536" x2="96.00" y2="542"/>
+<text class="tick" x="96.00" y="561" text-anchor="middle">0</text>
+<line class="grid" x1="199.50" y1="68" x2="199.50" y2="536"/>
+<line class="axis" x1="199.50" y1="536" x2="199.50" y2="542"/>
+<text class="tick" x="199.50" y="561" text-anchor="middle">1</text>
+<line class="grid" x1="303.00" y1="68" x2="303.00" y2="536"/>
+<line class="axis" x1="303.00" y1="536" x2="303.00" y2="542"/>
+<text class="tick" x="303.00" y="561" text-anchor="middle">2</text>
+<line class="grid" x1="406.50" y1="68" x2="406.50" y2="536"/>
+<line class="axis" x1="406.50" y1="536" x2="406.50" y2="542"/>
+<text class="tick" x="406.50" y="561" text-anchor="middle">3</text>
+<line class="grid" x1="510.00" y1="68" x2="510.00" y2="536"/>
+<line class="axis" x1="510.00" y1="536" x2="510.00" y2="542"/>
+<text class="tick" x="510.00" y="561" text-anchor="middle">4</text>
+<line class="grid" x1="613.50" y1="68" x2="613.50" y2="536"/>
+<line class="axis" x1="613.50" y1="536" x2="613.50" y2="542"/>
+<text class="tick" x="613.50" y="561" text-anchor="middle">5</text>
+<line class="grid" x1="717.00" y1="68" x2="717.00" y2="536"/>
+<line class="axis" x1="717.00" y1="536" x2="717.00" y2="542"/>
+<text class="tick" x="717.00" y="561" text-anchor="middle">6</text>
+<line class="grid" x1="820.50" y1="68" x2="820.50" y2="536"/>
+<line class="axis" x1="820.50" y1="536" x2="820.50" y2="542"/>
+<text class="tick" x="820.50" y="561" text-anchor="middle">7</text>
+<line class="grid" x1="924.00" y1="68" x2="924.00" y2="536"/>
+<line class="axis" x1="924.00" y1="536" x2="924.00" y2="542"/>
+<text class="tick" x="924.00" y="561" text-anchor="middle">8</text>
+<line class="grid" x1="96" y1="536.00" x2="924" y2="536.00"/>
+<line class="axis" x1="90" y1="536.00" x2="96" y2="536.00"/>
+<text class="tick" x="84" y="540.00" text-anchor="end">0.0</text>
+<line class="grid" x1="96" y1="442.40" x2="924" y2="442.40"/>
+<line class="axis" x1="90" y1="442.40" x2="96" y2="442.40"/>
+<text class="tick" x="84" y="446.40" text-anchor="end">28.1</text>
+<line class="grid" x1="96" y1="348.80" x2="924" y2="348.80"/>
+<line class="axis" x1="90" y1="348.80" x2="96" y2="348.80"/>
+<text class="tick" x="84" y="352.80" text-anchor="end">56.1</text>
+<line class="grid" x1="96" y1="255.20" x2="924" y2="255.20"/>
+<line class="axis" x1="90" y1="255.20" x2="96" y2="255.20"/>
+<text class="tick" x="84" y="259.20" text-anchor="end">84.2</text>
+<line class="grid" x1="96" y1="161.60" x2="924" y2="161.60"/>
+<line class="axis" x1="90" y1="161.60" x2="96" y2="161.60"/>
+<text class="tick" x="84" y="165.60" text-anchor="end">112.2</text>
+<line class="grid" x1="96" y1="68.00" x2="924" y2="68.00"/>
+<line class="axis" x1="90" y1="68.00" x2="96" y2="68.00"/>
+<text class="tick" x="84" y="72.00" text-anchor="end">140.3</text>
+<polyline class="line" stroke="#1f77b4" points="96.00,435.87 199.50,330.01 303.00,366.41 406.50,399.51 510.00,432.89 613.50,446.26 717.00,464.71 820.50,477.99 924.00,494.60"/>
+<circle class="point" fill="#1f77b4" cx="96.00" cy="435.87" r="5"/>
+<circle class="point" fill="#1f77b4" cx="199.50" cy="330.01" r="5"/>
+<circle class="point" fill="#1f77b4" cx="303.00" cy="366.41" r="5"/>
+<circle class="point" fill="#1f77b4" cx="406.50" cy="399.51" r="5"/>
+<circle class="point" fill="#1f77b4" cx="510.00" cy="432.89" r="5"/>
+<circle class="point" fill="#1f77b4" cx="613.50" cy="446.26" r="5"/>
+<circle class="point" fill="#1f77b4" cx="717.00" cy="464.71" r="5"/>
+<circle class="point" fill="#1f77b4" cx="820.50" cy="477.99" r="5"/>
+<circle class="point" fill="#1f77b4" cx="924.00" cy="494.60" r="5"/>
+<polyline class="line" stroke="#d62728" points="96.00,110.55 199.50,250.79 303.00,334.27 406.50,387.03 510.00,428.57 613.50,442.18 717.00,462.73 820.50,477.04 924.00,493.97"/>
+<circle class="point" fill="#d62728" cx="96.00" cy="110.55" r="5"/>
+<circle class="point" fill="#d62728" cx="199.50" cy="250.79" r="5"/>
+<circle class="point" fill="#d62728" cx="303.00" cy="334.27" r="5"/>
+<circle class="point" fill="#d62728" cx="406.50" cy="387.03" r="5"/>
+<circle class="point" fill="#d62728" cx="510.00" cy="428.57" r="5"/>
+<circle class="point" fill="#d62728" cx="613.50" cy="442.18" r="5"/>
+<circle class="point" fill="#d62728" cx="717.00" cy="462.73" r="5"/>
+<circle class="point" fill="#d62728" cx="820.50" cy="477.04" r="5"/>
+<circle class="point" fill="#d62728" cx="924.00" cy="493.97" r="5"/>
+<line x1="680" y1="88" x2="710" y2="88" stroke="#1f77b4" stroke-width="3"/>
+<circle fill="#1f77b4" stroke="white" stroke-width="1.5" cx="695" cy="88" r="5"/>
+<text class="legend" x="722" y="93">ICA</text>
+<line x1="680" y1="116" x2="710" y2="116" stroke="#d62728" stroke-width="3"/>
+<circle fill="#d62728" stroke="white" stroke-width="1.5" cx="695" cy="116" r="5"/>
+<text class="legend" x="722" y="121">Gaussian</text>
+<text class="label" x="480" y="592" text-anchor="middle">layer i</text>
+<text class="label" transform="translate(28 304) rotate(-90)" text-anchor="middle">effective rank R_i</text>
+<text class="tick" x="480" y="624" text-anchor="middle">R_i = (sum_j sigma_j)^2 / sum_j sigma_j^2; batch size 8192</text>
+</svg>

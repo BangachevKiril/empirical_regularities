@@ -74,6 +74,12 @@ srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:10:00 --mem=1
   --samples 8192 --output-dir results/mlp_effective_rank_gaussian
 ```
 
+To compare ICA and Gaussian effective ranks on one plot:
+
+```bash
+python -m experiments.plot_effective_rank_comparison
+```
+
 On a GPU node:
 
 ```bash
