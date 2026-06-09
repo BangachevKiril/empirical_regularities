@@ -8,6 +8,9 @@ from torch.nn import functional as F
 class DeepReLUMLP(nn.Module):
     """Depth-L ReLU MLP with square n-by-n weight matrices.
 
+    By default, weights are Gaussian with variance 2 / n, equivalently
+    standard deviation sqrt(2 / n).
+
     The module computes
 
         Z_i = W_i X_{i-1}
@@ -34,7 +37,8 @@ class DeepReLUMLP(nn.Module):
 
         self.n = int(n)
         self.L = int(L)
-        self.init_std = float(2.0 / n if init_std is None else init_std)
+        self.init_std = float((2.0 / n) ** 0.5 if init_std is None else init_std)
+        self.init_variance = self.init_std**2
 
         factory_kwargs = {"device": device, "dtype": dtype}
         self.weights = nn.ParameterList(
@@ -58,4 +62,3 @@ class DeepReLUMLP(nn.Module):
         for weight in self.weights:
             x = F.relu(weight @ x)
         return x
-

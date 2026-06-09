@@ -64,22 +64,22 @@ text { font-family: Arial, Helvetica, sans-serif; fill: #172033; }
 <text class="tick" x="924.00" y="573" text-anchor="middle">16</text>
 <line class="grid" x1="96" y1="548.00" x2="924" y2="548.00"/>
 <line class="axis" x1="90" y1="548.00" x2="96" y2="548.00"/>
-<text class="tick" x="84" y="552.00" text-anchor="end">-39.23</text>
+<text class="tick" x="84" y="552.00" text-anchor="end">-5.96</text>
 <line class="grid" x1="96" y1="452.00" x2="924" y2="452.00"/>
 <line class="axis" x1="90" y1="452.00" x2="96" y2="452.00"/>
-<text class="tick" x="84" y="456.00" text-anchor="end">-36.57</text>
+<text class="tick" x="84" y="456.00" text-anchor="end">-3.30</text>
 <line class="grid" x1="96" y1="356.00" x2="924" y2="356.00"/>
 <line class="axis" x1="90" y1="356.00" x2="96" y2="356.00"/>
-<text class="tick" x="84" y="360.00" text-anchor="end">-33.92</text>
+<text class="tick" x="84" y="360.00" text-anchor="end">-0.65</text>
 <line class="grid" x1="96" y1="260.00" x2="924" y2="260.00"/>
 <line class="axis" x1="90" y1="260.00" x2="96" y2="260.00"/>
-<text class="tick" x="84" y="264.00" text-anchor="end">-31.27</text>
+<text class="tick" x="84" y="264.00" text-anchor="end">2.00</text>
 <line class="grid" x1="96" y1="164.00" x2="924" y2="164.00"/>
 <line class="axis" x1="90" y1="164.00" x2="96" y2="164.00"/>
-<text class="tick" x="84" y="168.00" text-anchor="end">-28.61</text>
+<text class="tick" x="84" y="168.00" text-anchor="end">4.66</text>
 <line class="grid" x1="96" y1="68.00" x2="924" y2="68.00"/>
 <line class="axis" x1="90" y1="68.00" x2="96" y2="68.00"/>
-<text class="tick" x="84" y="72.00" text-anchor="end">-25.96</text>
+<text class="tick" x="84" y="72.00" text-anchor="end">7.31</text>
 <polygon class="shade" points="96.00,101.10 151.20,132.90 206.40,150.71 261.60,183.85 316.80,197.70 372.00,230.66 427.20,250.95 482.40,268.49 537.60,304.31 592.80,336.97 648.00,362.14 703.20,380.43 758.40,402.07 813.60,431.22 868.80,454.02 924.00,474.47 924.00,514.90 868.80,484.17 813.60,455.16 758.40,424.58 703.20,406.41 648.00,394.74 592.80,366.54 537.60,336.71 482.40,318.49 427.20,285.65 372.00,255.02 316.80,230.81 261.60,211.02 206.40,188.09 151.20,155.42 96.00,136.91"/>
 <polyline class="line" points="96.00,119.00 151.20,144.16 206.40,169.40 261.60,197.44 316.80,214.25 372.00,242.84 427.20,268.30 482.40,293.49 537.60,320.51 592.80,351.75 648.00,378.44 703.20,393.42 758.40,413.32 813.60,443.19 868.80,469.09 924.00,494.69"/>
 <circle class="point" cx="96.00" cy="119.00" r="4.5"/>

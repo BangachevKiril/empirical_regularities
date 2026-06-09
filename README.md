@@ -30,6 +30,8 @@ python -m inference_models.smoke_test_relu_mlp
 python -m data_generators.smoke_test_ica
 ```
 
+The default MLP initialization uses Gaussian weights with variance `2 / n`.
+
 ## ICA generator
 
 ```python
