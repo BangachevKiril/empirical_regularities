@@ -65,6 +65,15 @@ srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:10:00 --mem=1
   --samples 8192 --output-dir results/mlp_effective_rank
 ```
 
+With isotropic Gaussian inputs:
+
+```bash
+srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:10:00 --mem=16G --cpus-per-task=2 \
+  python -m experiments.mlp_effective_rank \
+  --device cuda --n 128 --depth 8 --input-distribution gaussian --gaussian-seed 0 --mlp-seed 0 \
+  --samples 8192 --output-dir results/mlp_effective_rank_gaussian
+```
+
 On a GPU node:
 
 ```bash

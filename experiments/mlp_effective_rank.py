@@ -68,6 +68,34 @@ def summarize_layer(layer: int, matrix: torch.Tensor) -> tuple[LayerRankResult, 
     return result, [float(value) for value in singular_values_cpu.tolist()]
 
 
+def make_torch_generator(device: torch.device, seed: int) -> torch.Generator:
+    generator = torch.Generator(device=device)
+    generator.manual_seed(int(seed))
+    return generator
+
+
+def sample_inputs(args: argparse.Namespace, device: torch.device) -> torch.Tensor:
+    if args.input_distribution == "ica":
+        data_generator = ICADataGenerator(
+            n=args.n,
+            seed=args.ica_seed,
+            p=args.p,
+            device=device,
+            dtype=torch.float32,
+        )
+        return data_generator.sample(args.samples, seed_=args.sample_seed)
+
+    if args.input_distribution == "gaussian":
+        return torch.randn(
+            (args.samples, args.n),
+            generator=make_torch_generator(device, args.gaussian_seed),
+            device=device,
+            dtype=torch.float32,
+        )
+
+    raise ValueError(f"Unknown input distribution: {args.input_distribution}.")
+
+
 def run_experiment(args: argparse.Namespace) -> tuple[list[LayerRankResult], list[list[float]]]:
     device = torch.device(args.device)
     torch.manual_seed(args.mlp_seed)
@@ -80,14 +108,7 @@ def run_experiment(args: argparse.Namespace) -> tuple[list[LayerRankResult], lis
     )
     model.eval()
 
-    data_generator = ICADataGenerator(
-        n=args.n,
-        seed=args.ica_seed,
-        p=args.p,
-        device=device,
-        dtype=torch.float32,
-    )
-    samples = data_generator.sample(args.samples, seed_=args.sample_seed)
+    samples = sample_inputs(args, device)
     activations = samples.T.contiguous()
 
     results: list[LayerRankResult] = []
@@ -168,7 +189,13 @@ def _nice_ticks(min_value: float, max_value: float, count: int) -> list[float]:
     return [min_value + i * step for i in range(count)]
 
 
-def write_svg(results: list[LayerRankResult], svg_path: Path) -> None:
+def write_svg(
+    results: list[LayerRankResult],
+    svg_path: Path,
+    *,
+    input_distribution: str,
+    samples: int,
+) -> None:
     svg_path.parent.mkdir(parents=True, exist_ok=True)
 
     xs = [float(result.layer) for result in results]
@@ -195,6 +222,8 @@ def write_svg(results: list[LayerRankResult], svg_path: Path) -> None:
     x_ticks = [float(layer) for layer in range(int(x_min), int(x_max) + 1)]
     y_ticks = _nice_ticks(y_min, y_max, 6)
 
+    title_suffix = "Gaussian Input" if input_distribution == "gaussian" else "ICA Input"
+
     parts = [
         '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">',
         "<style>",
@@ -208,7 +237,7 @@ def write_svg(results: list[LayerRankResult], svg_path: Path) -> None:
         ".point { fill: #d62728; stroke: white; stroke-width: 1.5; }",
         "</style>",
         '<rect width="960" height="640" fill="#ffffff"/>',
-        '<text class="title" x="480" y="38" text-anchor="middle">MLP Activation Effective Rank</text>',
+        f'<text class="title" x="480" y="38" text-anchor="middle">MLP Activation Effective Rank ({title_suffix})</text>',
         f'<line class="axis" x1="{margin_left}" y1="{height - margin_bottom}" x2="{width - margin_right}" y2="{height - margin_bottom}"/>',
         f'<line class="axis" x1="{margin_left}" y1="{margin_top}" x2="{margin_left}" y2="{height - margin_bottom}"/>',
     ]
@@ -241,7 +270,7 @@ def write_svg(results: list[LayerRankResult], svg_path: Path) -> None:
         [
             '<text class="label" x="480" y="604" text-anchor="middle">layer i</text>',
             '<text class="label" transform="translate(28 320) rotate(-90)" text-anchor="middle">effective rank R_i</text>',
-            '<text class="tick" x="480" y="630" text-anchor="middle">R_i = (sum_j sigma_j)^2 / sum_j sigma_j^2; batch size 8192</text>',
+            f'<text class="tick" x="480" y="630" text-anchor="middle">R_i = (sum_j sigma_j)^2 / sum_j sigma_j^2; batch size {samples}</text>',
             "</svg>",
         ]
     )
@@ -254,8 +283,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth", type=int, default=8)
     parser.add_argument("--p", type=int, default=32)
     parser.add_argument("--samples", type=int, default=8192)
+    parser.add_argument(
+        "--input-distribution",
+        choices=["ica", "gaussian"],
+        default="ica",
+    )
     parser.add_argument("--ica-seed", type=int, default=0)
     parser.add_argument("--sample-seed", type=int, default=0)
+    parser.add_argument("--gaussian-seed", type=int, default=0)
     parser.add_argument("--mlp-seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
@@ -275,7 +310,9 @@ def main() -> None:
         flush=True,
     )
     print(
-        f"ica_seed={args.ica_seed} sample_seed={args.sample_seed} mlp_seed={args.mlp_seed}",
+        f"input_distribution={args.input_distribution} "
+        f"ica_seed={args.ica_seed} sample_seed={args.sample_seed} "
+        f"gaussian_seed={args.gaussian_seed} mlp_seed={args.mlp_seed}",
         flush=True,
     )
 
@@ -285,7 +322,12 @@ def main() -> None:
     svg_path = args.output_dir / "plot_effective_rank_vs_layer.svg"
     write_results_csv(results, results_csv_path)
     write_singular_values_csv(singular_values_by_layer, singular_values_csv_path)
-    write_svg(results, svg_path)
+    write_svg(
+        results,
+        svg_path,
+        input_distribution=args.input_distribution,
+        samples=args.samples,
+    )
 
     print(f"wrote {results_csv_path}", flush=True)
     print(f"wrote {singular_values_csv_path}", flush=True)
