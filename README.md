@@ -39,6 +39,16 @@ generator = ICADataGenerator(n=128, seed=1234, p=32, device="cuda")
 dataset = generator.sample(m=1024, seed_=0)
 ```
 
+## MLP mean concentration experiment
+
+```bash
+srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:15:00 --mem=16G --cpus-per-task=2 \
+  python -m experiments.mlp_mean_concentration \
+  --device cuda --n 128 --depth 8 --p 32 --ica-seed 0 --mlp-seed 0 \
+  --true-samples 1000000 --batch-size 4096 --k-min 1 --k-max 16 \
+  --output-dir results/mlp_mean_concentration
+```
+
 On a GPU node:
 
 ```bash
