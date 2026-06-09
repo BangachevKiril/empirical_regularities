@@ -51,6 +51,15 @@ srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:15:00 --mem=1
   --output-dir results/mlp_mean_concentration
 ```
 
+## MLP effective rank experiment
+
+```bash
+srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:10:00 --mem=16G --cpus-per-task=2 \
+  python -m experiments.mlp_effective_rank \
+  --device cuda --n 128 --depth 8 --p 32 --ica-seed 0 --sample-seed 0 --mlp-seed 0 \
+  --samples 8192 --output-dir results/mlp_effective_rank
+```
+
 On a GPU node:
 
 ```bash
