@@ -14,22 +14,39 @@ from inference_models import DeepReLUMLP
 
 
 @dataclass(frozen=True)
-class ExperimentResult:
+class RunResult:
     k: int
     m: int
+    run: int
+    seed_base: int
     squared_error: float
-
-    @property
-    def log_k(self) -> float:
-        return math.log(self.k)
-
-    @property
-    def log_m(self) -> float:
-        return math.log(self.m)
 
     @property
     def log_squared_error(self) -> float:
         return math.log(self.squared_error)
+
+
+@dataclass(frozen=True)
+class SummaryResult:
+    k: int
+    m: int
+    runs: int
+    mean_squared_error: float
+    std_squared_error: float
+    mean_log_squared_error: float
+    std_log_squared_error: float
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)
+
+
+def _sample_std(values: list[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = _mean(values)
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    return math.sqrt(variance)
 
 
 def stream_mlp_mean(
@@ -60,7 +77,31 @@ def stream_mlp_mean(
     return output_sum / total_samples
 
 
-def run_experiment(args: argparse.Namespace) -> list[ExperimentResult]:
+def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
+    by_k: dict[int, list[RunResult]] = {}
+    for result in run_results:
+        by_k.setdefault(result.k, []).append(result)
+
+    summaries: list[SummaryResult] = []
+    for k in sorted(by_k):
+        results = by_k[k]
+        squared_errors = [result.squared_error for result in results]
+        log_squared_errors = [result.log_squared_error for result in results]
+        summaries.append(
+            SummaryResult(
+                k=k,
+                m=results[0].m,
+                runs=len(results),
+                mean_squared_error=_mean(squared_errors),
+                std_squared_error=_sample_std(squared_errors),
+                mean_log_squared_error=_mean(log_squared_errors),
+                std_log_squared_error=_sample_std(log_squared_errors),
+            )
+        )
+    return summaries
+
+
+def run_experiment(args: argparse.Namespace) -> tuple[list[RunResult], list[SummaryResult]]:
     device = torch.device(args.device)
     torch.manual_seed(args.mlp_seed)
 
@@ -94,29 +135,44 @@ def run_experiment(args: argparse.Namespace) -> list[ExperimentResult]:
         flush=True,
     )
 
-    results: list[ExperimentResult] = []
+    run_results: list[RunResult] = []
     for k in range(args.k_min, args.k_max + 1):
         m = 2**k
-        mean_estimate = stream_mlp_mean(
-            model=model,
-            data_generator=data_generator,
-            total_samples=m,
-            batch_size=args.batch_size,
-            seed_base=args.estimate_seed_base + k * args.seed_stride,
-        )
-        squared_error = torch.sum((mean_estimate - true_mean) ** 2).item()
-        result = ExperimentResult(k=k, m=m, squared_error=squared_error)
-        results.append(result)
+        for run in range(args.runs):
+            seed_base = (
+                args.estimate_seed_base
+                + k * args.seed_stride
+                + run * args.run_seed_stride
+            )
+            mean_estimate = stream_mlp_mean(
+                model=model,
+                data_generator=data_generator,
+                total_samples=m,
+                batch_size=args.batch_size,
+                seed_base=seed_base,
+            )
+            squared_error = torch.sum((mean_estimate - true_mean) ** 2).item()
+            run_results.append(
+                RunResult(
+                    k=k,
+                    m=m,
+                    run=run,
+                    seed_base=seed_base,
+                    squared_error=squared_error,
+                )
+            )
+        summary = summarize_results([result for result in run_results if result.k == k])[0]
         print(
             f"k={k:2d} m={m:6d} "
-            f"log_sq_error={result.log_squared_error: .6f}",
+            f"mean_log_sq_error={summary.mean_log_squared_error: .6f} "
+            f"std={summary.std_log_squared_error: .6f}",
             flush=True,
         )
 
-    return results
+    return run_results, summarize_results(run_results)
 
 
-def write_csv(results: list[ExperimentResult], csv_path: Path) -> None:
+def write_run_csv(results: list[RunResult], csv_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(
@@ -124,9 +180,9 @@ def write_csv(results: list[ExperimentResult], csv_path: Path) -> None:
             fieldnames=[
                 "k",
                 "m",
+                "run",
+                "seed_base",
                 "squared_error",
-                "log_k",
-                "log_m",
                 "log_squared_error",
             ],
         )
@@ -136,10 +192,40 @@ def write_csv(results: list[ExperimentResult], csv_path: Path) -> None:
                 {
                     "k": result.k,
                     "m": result.m,
+                    "run": result.run,
+                    "seed_base": result.seed_base,
                     "squared_error": result.squared_error,
-                    "log_k": result.log_k,
-                    "log_m": result.log_m,
                     "log_squared_error": result.log_squared_error,
+                }
+            )
+
+
+def write_summary_csv(results: list[SummaryResult], csv_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "k",
+                "m",
+                "runs",
+                "mean_squared_error",
+                "std_squared_error",
+                "mean_log_squared_error",
+                "std_log_squared_error",
+            ],
+        )
+        writer.writeheader()
+        for result in results:
+            writer.writerow(
+                {
+                    "k": result.k,
+                    "m": result.m,
+                    "runs": result.runs,
+                    "mean_squared_error": result.mean_squared_error,
+                    "std_squared_error": result.std_squared_error,
+                    "mean_log_squared_error": result.mean_log_squared_error,
+                    "std_log_squared_error": result.std_log_squared_error,
                 }
             )
 
@@ -151,13 +237,21 @@ def _nice_ticks(min_value: float, max_value: float, count: int) -> list[float]:
     return [min_value + i * step for i in range(count)]
 
 
-def write_svg(results: list[ExperimentResult], svg_path: Path) -> None:
+def write_svg(results: list[SummaryResult], svg_path: Path) -> None:
     svg_path.parent.mkdir(parents=True, exist_ok=True)
 
-    xs = [result.log_k for result in results]
-    ys = [result.log_squared_error for result in results]
+    xs = [float(result.k) for result in results]
+    ys = [result.mean_log_squared_error for result in results]
+    lower_ys = [
+        result.mean_log_squared_error - result.std_log_squared_error
+        for result in results
+    ]
+    upper_ys = [
+        result.mean_log_squared_error + result.std_log_squared_error
+        for result in results
+    ]
     x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(ys), max(ys)
+    y_min, y_max = min(lower_ys), max(upper_ys)
     y_padding = 0.08 * max(y_max - y_min, 1.0)
     y_min -= y_padding
     y_max += y_padding
@@ -176,8 +270,13 @@ def write_svg(results: list[ExperimentResult], svg_path: Path) -> None:
 
     points = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
     polyline = " ".join(f"{x:.2f},{y:.2f}" for x, y in points)
+    upper_points = [(sx(x), sy(y)) for x, y in zip(xs, upper_ys)]
+    lower_points = [(sx(x), sy(y)) for x, y in zip(reversed(xs), reversed(lower_ys))]
+    shade_points = " ".join(
+        f"{x:.2f},{y:.2f}" for x, y in [*upper_points, *lower_points]
+    )
 
-    x_ticks = [math.log(k) for k in [1, 2, 4, 8, 16]]
+    x_ticks = [float(k) for k in range(int(x_min), int(x_max) + 1)]
     y_ticks = _nice_ticks(y_min, y_max, 6)
 
     parts = [
@@ -189,6 +288,7 @@ def write_svg(results: list[ExperimentResult], svg_path: Path) -> None:
         ".tick { font-size: 13px; fill: #526071; }",
         ".grid { stroke: #d8dee8; stroke-width: 1; }",
         ".axis { stroke: #172033; stroke-width: 1.4; }",
+        ".shade { fill: #1f77b4; opacity: 0.18; }",
         ".line { fill: none; stroke: #1f77b4; stroke-width: 3; }",
         ".point { fill: #d62728; stroke: white; stroke-width: 1.5; }",
         "</style>",
@@ -204,7 +304,7 @@ def write_svg(results: list[ExperimentResult], svg_path: Path) -> None:
             [
                 f'<line class="grid" x1="{x:.2f}" y1="{margin_top}" x2="{x:.2f}" y2="{height - margin_bottom}"/>',
                 f'<line class="axis" x1="{x:.2f}" y1="{height - margin_bottom}" x2="{x:.2f}" y2="{height - margin_bottom + 6}"/>',
-                f'<text class="tick" x="{x:.2f}" y="{height - margin_bottom + 25}" text-anchor="middle">{tick:.2f}</text>',
+                f'<text class="tick" x="{x:.2f}" y="{height - margin_bottom + 25}" text-anchor="middle">{int(tick)}</text>',
             ]
         )
 
@@ -218,15 +318,16 @@ def write_svg(results: list[ExperimentResult], svg_path: Path) -> None:
             ]
         )
 
+    parts.append(f'<polygon class="shade" points="{shade_points}"/>')
     parts.append(f'<polyline class="line" points="{polyline}"/>')
     for x, y in points:
         parts.append(f'<circle class="point" cx="{x:.2f}" cy="{y:.2f}" r="4.5"/>')
 
     parts.extend(
         [
-            '<text class="label" x="480" y="604" text-anchor="middle">log(k), where m = 2^k</text>',
-            '<text class="label" transform="translate(28 320) rotate(-90)" text-anchor="middle">log ||mu_k - mu||_2^2</text>',
-            '<text class="tick" x="480" y="630" text-anchor="middle">natural logs; true mean estimated using 1,000,000 samples</text>',
+            '<text class="label" x="480" y="604" text-anchor="middle">k, where m = 2^k</text>',
+            '<text class="label" transform="translate(28 320) rotate(-90)" text-anchor="middle">mean log ||mu_k - mu||_2^2</text>',
+            '<text class="tick" x="480" y="630" text-anchor="middle">natural logs; shaded band is +/- one standard deviation across runs</text>',
             "</svg>",
         ]
     )
@@ -244,9 +345,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--k-min", type=int, default=1)
     parser.add_argument("--k-max", type=int, default=16)
+    parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--true-seed-base", type=int, default=10_000)
     parser.add_argument("--estimate-seed-base", type=int, default=1_000_000)
     parser.add_argument("--seed-stride", type=int, default=10_000)
+    parser.add_argument("--run-seed-stride", type=int, default=1_000_000)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--output-dir",
@@ -262,17 +365,20 @@ def main() -> None:
     print(f"device={args.device}", flush=True)
     print(f"n={args.n} depth={args.depth} p={args.p}", flush=True)
     print(f"true_samples={args.true_samples} batch_size={args.batch_size}", flush=True)
+    print(f"runs_per_k={args.runs}", flush=True)
 
-    results = run_experiment(args)
-    csv_path = args.output_dir / "results.csv"
-    svg_path = args.output_dir / "plot_log_error_vs_log_k.svg"
-    write_csv(results, csv_path)
-    write_svg(results, svg_path)
+    run_results, summary_results = run_experiment(args)
+    run_csv_path = args.output_dir / "run_results.csv"
+    summary_csv_path = args.output_dir / "results.csv"
+    svg_path = args.output_dir / "plot_log_error_vs_k.svg"
+    write_run_csv(run_results, run_csv_path)
+    write_summary_csv(summary_results, summary_csv_path)
+    write_svg(summary_results, svg_path)
 
-    print(f"wrote {csv_path}", flush=True)
+    print(f"wrote {run_csv_path}", flush=True)
+    print(f"wrote {summary_csv_path}", flush=True)
     print(f"wrote {svg_path}", flush=True)
 
 
 if __name__ == "__main__":
     main()
-
