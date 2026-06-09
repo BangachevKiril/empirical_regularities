@@ -4,7 +4,7 @@ Initial project structure for inference models and data generators.
 
 ## ORCD environment
 
-From `~/empirical_regularities` on ORCD:
+From `/home/kirilb/data/empirical_regularities` on ORCD:
 
 ```bash
 module load deprecated-modules
@@ -27,6 +27,7 @@ python -m pip install -r requirements.txt
 
 ```bash
 python -m inference_models.smoke_test_relu_mlp
+python -m data_generators.smoke_test_ica
 ```
 
 On a GPU node:
