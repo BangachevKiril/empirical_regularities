@@ -51,6 +51,11 @@ srun --immediate=180 -p mit_normal_gpu --gres=gpu:l40s:1 --time=00:15:00 --mem=1
   --output-dir results/mlp_mean_concentration
 ```
 
+This writes the sampling errors, a `cumulant_results.csv` row for the
+zero-mean `p I` input covariance propagation with cumulants up to order 2, and
+`plot_log_error_vs_k.svg` with the cumulant-propagation error drawn as a
+horizontal comparison line.
+
 ## MLP effective rank experiment
 
 ```bash

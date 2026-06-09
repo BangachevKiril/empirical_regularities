@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 
+from cumulant_propagation import propagate_cumulants
 from data_generators import ICADataGenerator
 from inference_models import DeepReLUMLP
 
@@ -35,6 +36,18 @@ class SummaryResult:
     std_squared_error: float
     mean_log_squared_error: float
     std_log_squared_error: float
+
+
+@dataclass(frozen=True)
+class CumulantResult:
+    cumulant_k_max: int
+    input_variance: float
+    squared_error: float
+    elapsed_seconds: float
+
+    @property
+    def log_squared_error(self) -> float:
+        return math.log(self.squared_error)
 
 
 def _mean(values: list[float]) -> float:
@@ -77,6 +90,28 @@ def stream_mlp_mean(
     return output_sum / total_samples
 
 
+def cumulant_propagation_mean(
+    *,
+    model: DeepReLUMLP,
+    p: int,
+    cumulant_k_max: int,
+    device: torch.device,
+) -> torch.Tensor:
+    cumulants = {
+        1: torch.zeros(model.n, device=device, dtype=torch.float64),
+        2: float(p) * torch.eye(model.n, device=device, dtype=torch.float64),
+    }
+    propagated = propagate_cumulants(
+        model,
+        cumulants,
+        k_max=cumulant_k_max,
+        return_tensors=True,
+        device=device,
+        dtype=torch.float64,
+    )
+    return propagated[1].to(dtype=torch.float64)
+
+
 def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
     by_k: dict[int, list[RunResult]] = {}
     for result in run_results:
@@ -101,7 +136,9 @@ def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
     return summaries
 
 
-def run_experiment(args: argparse.Namespace) -> tuple[list[RunResult], list[SummaryResult]]:
+def run_experiment(
+    args: argparse.Namespace,
+) -> tuple[list[RunResult], list[SummaryResult], CumulantResult]:
     device = torch.device(args.device)
     torch.manual_seed(args.mlp_seed)
 
@@ -132,6 +169,28 @@ def run_experiment(args: argparse.Namespace) -> tuple[list[RunResult], list[Summ
     print(
         f"computed true mean from {args.true_samples} samples "
         f"in {time.time() - start:.2f}s",
+        flush=True,
+    )
+
+    start = time.time()
+    cumulant_mean = cumulant_propagation_mean(
+        model=model,
+        p=args.p,
+        cumulant_k_max=args.cumulant_k_max,
+        device=device,
+    )
+    cumulant_elapsed = time.time() - start
+    cumulant_squared_error = torch.sum((cumulant_mean - true_mean) ** 2).item()
+    cumulant_result = CumulantResult(
+        cumulant_k_max=args.cumulant_k_max,
+        input_variance=float(args.p),
+        squared_error=cumulant_squared_error,
+        elapsed_seconds=cumulant_elapsed,
+    )
+    print(
+        f"cumulant propagation k_max={args.cumulant_k_max} "
+        f"log_sq_error={cumulant_result.log_squared_error: .6f} "
+        f"in {cumulant_elapsed:.2f}s",
         flush=True,
     )
 
@@ -169,7 +228,7 @@ def run_experiment(args: argparse.Namespace) -> tuple[list[RunResult], list[Summ
             flush=True,
         )
 
-    return run_results, summarize_results(run_results)
+    return run_results, summarize_results(run_results), cumulant_result
 
 
 def write_run_csv(results: list[RunResult], csv_path: Path) -> None:
@@ -230,6 +289,31 @@ def write_summary_csv(results: list[SummaryResult], csv_path: Path) -> None:
             )
 
 
+def write_cumulant_csv(result: CumulantResult, csv_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "cumulant_k_max",
+                "input_variance",
+                "squared_error",
+                "log_squared_error",
+                "elapsed_seconds",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "cumulant_k_max": result.cumulant_k_max,
+                "input_variance": result.input_variance,
+                "squared_error": result.squared_error,
+                "log_squared_error": result.log_squared_error,
+                "elapsed_seconds": result.elapsed_seconds,
+            }
+        )
+
+
 def _nice_ticks(min_value: float, max_value: float, count: int) -> list[float]:
     if math.isclose(min_value, max_value):
         return [min_value]
@@ -237,7 +321,12 @@ def _nice_ticks(min_value: float, max_value: float, count: int) -> list[float]:
     return [min_value + i * step for i in range(count)]
 
 
-def write_svg(results: list[SummaryResult], svg_path: Path) -> None:
+def write_svg(
+    results: list[SummaryResult],
+    svg_path: Path,
+    *,
+    cumulant_result: CumulantResult | None = None,
+) -> None:
     svg_path.parent.mkdir(parents=True, exist_ok=True)
 
     xs = [float(result.k) for result in results]
@@ -251,7 +340,10 @@ def write_svg(results: list[SummaryResult], svg_path: Path) -> None:
         for result in results
     ]
     x_min, x_max = min(xs), max(xs)
-    y_min, y_max = min(lower_ys), max(upper_ys)
+    comparison_ys = [*lower_ys, *upper_ys]
+    if cumulant_result is not None:
+        comparison_ys.append(cumulant_result.log_squared_error)
+    y_min, y_max = min(comparison_ys), max(comparison_ys)
     y_padding = 0.08 * max(y_max - y_min, 1.0)
     y_min -= y_padding
     y_max += y_padding
@@ -290,7 +382,9 @@ def write_svg(results: list[SummaryResult], svg_path: Path) -> None:
         ".axis { stroke: #172033; stroke-width: 1.4; }",
         ".shade { fill: #1f77b4; opacity: 0.18; }",
         ".line { fill: none; stroke: #1f77b4; stroke-width: 3; }",
+        ".cumulant-line { fill: none; stroke: #2ca02c; stroke-width: 3; stroke-dasharray: 10 7; }",
         ".point { fill: #d62728; stroke: white; stroke-width: 1.5; }",
+        ".legend { font-size: 14px; fill: #263447; }",
         "</style>",
         '<rect width="960" height="640" fill="#ffffff"/>',
         '<text class="title" x="480" y="38" text-anchor="middle">MLP Output Mean Concentration</text>',
@@ -322,12 +416,23 @@ def write_svg(results: list[SummaryResult], svg_path: Path) -> None:
     parts.append(f'<polyline class="line" points="{polyline}"/>')
     for x, y in points:
         parts.append(f'<circle class="point" cx="{x:.2f}" cy="{y:.2f}" r="4.5"/>')
+    if cumulant_result is not None:
+        y = sy(cumulant_result.log_squared_error)
+        parts.extend(
+            [
+                f'<line class="cumulant-line" x1="{margin_left}" y1="{y:.2f}" x2="{width - margin_right}" y2="{y:.2f}"/>',
+                '<line class="line" x1="654" y1="76" x2="704" y2="76"/>',
+                '<text class="legend" x="714" y="81">sampling mean</text>',
+                '<line class="cumulant-line" x1="654" y1="102" x2="704" y2="102"/>',
+                f'<text class="legend" x="714" y="107">cumulant propagation, orders &lt;= {cumulant_result.cumulant_k_max}</text>',
+            ]
+        )
 
     parts.extend(
         [
             '<text class="label" x="480" y="604" text-anchor="middle">k, where m = 2^k</text>',
-            '<text class="label" transform="translate(28 320) rotate(-90)" text-anchor="middle">mean log ||mu_k - mu||_2^2</text>',
-            '<text class="tick" x="480" y="630" text-anchor="middle">natural logs; shaded band is +/- one standard deviation across runs</text>',
+            '<text class="label" transform="translate(28 320) rotate(-90)" text-anchor="middle">log squared error</text>',
+            '<text class="tick" x="480" y="630" text-anchor="middle">natural logs; shaded band is +/- one standard deviation across sampling runs</text>',
             "</svg>",
         ]
     )
@@ -346,6 +451,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k-min", type=int, default=1)
     parser.add_argument("--k-max", type=int, default=16)
     parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--cumulant-k-max", type=int, default=2)
     parser.add_argument("--true-seed-base", type=int, default=10_000)
     parser.add_argument("--estimate-seed-base", type=int, default=1_000_000)
     parser.add_argument("--seed-stride", type=int, default=10_000)
@@ -367,16 +473,19 @@ def main() -> None:
     print(f"true_samples={args.true_samples} batch_size={args.batch_size}", flush=True)
     print(f"runs_per_k={args.runs}", flush=True)
 
-    run_results, summary_results = run_experiment(args)
+    run_results, summary_results, cumulant_result = run_experiment(args)
     run_csv_path = args.output_dir / "run_results.csv"
     summary_csv_path = args.output_dir / "results.csv"
+    cumulant_csv_path = args.output_dir / "cumulant_results.csv"
     svg_path = args.output_dir / "plot_log_error_vs_k.svg"
     write_run_csv(run_results, run_csv_path)
     write_summary_csv(summary_results, summary_csv_path)
-    write_svg(summary_results, svg_path)
+    write_cumulant_csv(cumulant_result, cumulant_csv_path)
+    write_svg(summary_results, svg_path, cumulant_result=cumulant_result)
 
     print(f"wrote {run_csv_path}", flush=True)
     print(f"wrote {summary_csv_path}", flush=True)
+    print(f"wrote {cumulant_csv_path}", flush=True)
     print(f"wrote {svg_path}", flush=True)
 
 
