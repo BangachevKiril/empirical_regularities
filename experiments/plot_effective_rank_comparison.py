@@ -162,6 +162,11 @@ def parse_args() -> argparse.Namespace:
         default=Path("results/mlp_effective_rank_gaussian/results.csv"),
     )
     parser.add_argument(
+        "--lowrank-results",
+        type=Path,
+        default=None,
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("results/mlp_effective_rank_comparison"),
@@ -172,8 +177,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     series = [
-        read_rank_series(args.ica_results, "ICA", "#1f77b4"),
         read_rank_series(args.gaussian_results, "Gaussian", "#d62728"),
+        *(
+            [read_rank_series(args.lowrank_results, "Gaussian-Lowrank", "#2ca02c")]
+            if args.lowrank_results is not None
+            else []
+        ),
+        read_rank_series(args.ica_results, "ICA", "#1f77b4"),
     ]
 
     comparison_csv_path = args.output_dir / "results.csv"
@@ -187,4 +197,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

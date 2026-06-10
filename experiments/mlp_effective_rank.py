@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 from torch.nn import functional as F
 
-from data_generators import GaussianDataGenerator, ICADataGenerator
+from data_generators import GaussianDataGenerator, GaussianLowRankDataGenerator, ICADataGenerator
 from inference_models import DeepReLUMLP
 
 
@@ -83,10 +83,21 @@ def sample_inputs(args: argparse.Namespace, device: torch.device) -> torch.Tenso
         data_generator = GaussianDataGenerator(
             n=args.n,
             seed=args.gaussian_seed,
+            p=args.p,
             device=device,
             dtype=torch.float32,
         )
         return data_generator.sample(args.samples)
+
+    if args.input_distribution == "gaussian_lowrank":
+        data_generator = GaussianLowRankDataGenerator(
+            n=args.n,
+            seed=args.lowrank_seed,
+            p=args.p,
+            device=device,
+            dtype=torch.float32,
+        )
+        return data_generator.sample(args.samples, seed_=args.sample_seed)
 
     raise ValueError(f"Unknown input distribution: {args.input_distribution}.")
 
@@ -217,7 +228,12 @@ def write_svg(
     x_ticks = [float(layer) for layer in range(int(x_min), int(x_max) + 1)]
     y_ticks = _nice_ticks(y_min, y_max, 6)
 
-    title_suffix = "Gaussian Input" if input_distribution == "gaussian" else "ICA Input"
+    title_by_distribution = {
+        "gaussian": "Gaussian Input",
+        "gaussian_lowrank": "Gaussian-Lowrank Input",
+        "ica": "ICA Input",
+    }
+    title_suffix = title_by_distribution.get(input_distribution, input_distribution)
 
     parts = [
         '<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">',
@@ -280,12 +296,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=8192)
     parser.add_argument(
         "--input-distribution",
-        choices=["ica", "gaussian"],
+        choices=["ica", "gaussian", "gaussian_lowrank"],
         default="ica",
     )
     parser.add_argument("--ica-seed", type=int, default=0)
     parser.add_argument("--sample-seed", type=int, default=0)
     parser.add_argument("--gaussian-seed", type=int, default=0)
+    parser.add_argument("--lowrank-seed", type=int, default=0)
     parser.add_argument("--mlp-seed", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
