@@ -9,7 +9,7 @@ from .base import DataGenerator
 class GaussianDataGenerator(DataGenerator):
     """Isotropic Gaussian data generator.
 
-    Samples are rows of the returned dataset, with independent N(0, 1)
+    Samples are rows of the returned dataset, with independent N(0, p)
     coordinates in dimension n.
     """
 
@@ -17,10 +17,14 @@ class GaussianDataGenerator(DataGenerator):
         self,
         n: int,
         seed: int = 0,
+        p: float = 1,
         *,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
+        if p <= 0:
+            raise ValueError("p must be positive.")
+        self.p = float(p)
         super().__init__(n, seed, device=device, dtype=dtype)
 
     def sample(self, m: int, seed_: int | None = None) -> Tensor:
@@ -29,9 +33,12 @@ class GaussianDataGenerator(DataGenerator):
         return super().sample(m, seed_=sample_seed)
 
     def _sample(self, m: int, generator: torch.Generator) -> Tensor:
-        return torch.randn(
+        dataset = torch.randn(
             (m, self.n),
             generator=generator,
             device=self.device,
             dtype=self.dtype,
         )
+        if self.p != 1.0:
+            dataset = dataset * (self.p**0.5)
+        return dataset
