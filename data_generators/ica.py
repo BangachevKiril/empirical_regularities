@@ -13,7 +13,7 @@ class ICADataGenerator(DataGenerator):
 
         x_i = A r_i,
 
-    where A has shape (n, p) with independent N(0, 1 / (np)) entries and
+    where A has shape (n, p) with independent N(0, 1) entries and
     r_i is uniform on {-1, 1}^p.
     """
 
@@ -32,13 +32,12 @@ class ICADataGenerator(DataGenerator):
         self.A: Tensor
         self.sources: Tensor | None = None
         super().__init__(n, seed, device=device, dtype=dtype)
-        scale = float(self.n * self.p) ** -0.5
         self.A = torch.randn(
             (self.n, self.p),
             generator=self._make_generator(self.seed),
             device=self.device,
             dtype=self.dtype,
-        ).mul_(scale)
+        )
 
     def _sample(self, m: int, generator: torch.Generator) -> Tensor:
         signs = torch.randint(
