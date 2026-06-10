@@ -14,7 +14,7 @@ from cumulant_propagation._arc_mlp_kprop.diagslice import DSTensor
 from cumulant_propagation._arc_mlp_kprop.factor_k4 import FactoredTensor4
 from cumulant_propagation._arc_mlp_kprop.flop_utils import NamedFlopCounter
 from cumulant_propagation._arc_mlp_kprop.harmonic import HTensor
-from data_generators import GaussianDataGenerator, ICADataGenerator
+from data_generators import GaussianDataGenerator, GaussianLowRankDataGenerator, ICADataGenerator
 from inference_models import DeepReLUMLP
 
 
@@ -177,6 +177,17 @@ def _known_distribution_initialization_flops(
     return flops
 
 
+def _known_lowrank_gaussian_initialization_flops(
+    *,
+    n: int,
+    p: int,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    del k_max, rank4
+    return 2 * int(n) * int(n) * int(p)
+
+
 def _gaussian_initialization_flops(
     *,
     n: int,
@@ -199,6 +210,66 @@ def _sample_initialization_flops(
     flops += _k2_estimator_flops(n=n, sample_count=sample_count)
     if k_max >= 4:
         flops += _sample_k4_estimator_flops(
+            n=n,
+            p=p,
+            sample_count=sample_count,
+            rank4=rank4,
+        )
+    return flops
+
+
+def _unknown_a_tau_initialization_flops(*, n: int, sample_count: int) -> int:
+    # Uses ||X.T @ X||_F^2 to get the off-diagonal sample-Gram statistic.
+    return 2 * int(sample_count) * int(n) * int(n) + 3 * int(n) * int(n)
+
+
+def _unknown_a_k4_estimator_flops(
+    *,
+    n: int,
+    p: int,
+    sample_count: int,
+    rank4: int | None,
+) -> int:
+    subspace_rank = min(int(n), int(p), int(sample_count))
+    pair_dim = subspace_rank * subspace_rank
+    rank = int(rank4) if rank4 is not None else int(sample_count)
+    covariance = 2 * int(sample_count) * int(n) * int(n)
+    subspace_eigh = int(round((10.0 / 3.0) * int(n) ** 3))
+    coordinates = 2 * int(sample_count) * int(n) * subspace_rank
+    pair_features = int(sample_count) * pair_dim
+    pair_gram = 2 * int(sample_count) * pair_dim * pair_dim
+    pair_eigh = int(round((10.0 / 3.0) * pair_dim**3))
+    lift = rank * (2 * int(n) * subspace_rank * subspace_rank + 2 * int(n) * int(n) * subspace_rank)
+    scale_and_pack = 3 * rank * int(n) * int(n)
+    return (
+        covariance
+        + subspace_eigh
+        + coordinates
+        + pair_features
+        + pair_gram
+        + pair_eigh
+        + lift
+        + scale_and_pack
+    )
+
+
+def _unknown_a_initialization_flops(
+    *,
+    n: int,
+    p: int,
+    sample_count: int,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    flops = _ica_sample_flops(n=n, p=p, sample_count=sample_count)
+    if k_max == 1:
+        # Sum sample energy and shrink it toward the prior mean p.
+        return flops + 2 * int(sample_count) * int(n) + 4
+    flops += _k2_estimator_flops(n=n, sample_count=sample_count)
+    if k_max == 3:
+        flops += _unknown_a_tau_initialization_flops(n=n, sample_count=sample_count)
+    if k_max >= 4:
+        flops += _unknown_a_k4_estimator_flops(
             n=n,
             p=p,
             sample_count=sample_count,
@@ -266,6 +337,19 @@ def _parse_cumulant_orders(value: str) -> list[int]:
     if any(order < 1 for order in orders):
         raise argparse.ArgumentTypeError("cumulant orders must be at least 1")
     return orders
+
+
+def _parse_fixed_cumulant_methods(value: str) -> list[str]:
+    methods = [part.strip() for part in value.split(",") if part.strip()]
+    if methods == ["none"]:
+        return []
+    allowed = {"prior", "known_distribution"}
+    unknown = sorted(set(methods) - allowed)
+    if unknown:
+        raise argparse.ArgumentTypeError(
+            f"unsupported fixed cumulant method(s): {', '.join(unknown)}"
+        )
+    return methods
 
 
 def _sync_if_cuda(device: torch.device) -> None:
@@ -373,6 +457,22 @@ def known_distribution_input_cumulants(
     return cumulants
 
 
+def known_lowrank_gaussian_input_cumulants(
+    *,
+    data_generator: GaussianLowRankDataGenerator,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict[int, torch.Tensor]:
+    del k_max
+    A = data_generator.A.to(device=device, dtype=dtype)
+    n = A.shape[0]
+    return {
+        1: torch.zeros(n, device=device, dtype=dtype),
+        2: A @ A.T,
+    }
+
+
 def _make_generator(device: torch.device, seed: int) -> torch.Generator:
     generator = torch.Generator(device=device)
     generator.manual_seed(int(seed))
@@ -421,6 +521,293 @@ def _compressed_s4_factors_from_sources(
     left = coefficient * eigvals[:, None, None] * lifted
     right = lifted
     return left.permute(1, 2, 0), right.permute(1, 2, 0), int(eigvals.numel())
+
+
+def _compressed_s4_factors_from_samples(
+    *,
+    samples: torch.Tensor,
+    coefficient: float,
+    eig_tol: float,
+    chunk_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    m, n = samples.shape
+    covariance = samples.T @ samples / float(m)
+    subspace_eigvals, subspace = torch.linalg.eigh(covariance)
+    subspace_keep = subspace_eigvals > eig_tol * subspace_eigvals.max().clamp_min(1.0)
+    subspace = subspace[:, subspace_keep]
+    q = int(subspace.shape[1])
+    if q == 0:
+        empty = torch.zeros((n, n, 0), device=samples.device, dtype=samples.dtype)
+        return empty, empty, 0
+
+    coordinates = samples @ subspace
+    pair_features = torch.einsum("ma,mb->mab", coordinates, coordinates).reshape(m, q * q)
+    pair_gram = pair_features.T @ pair_features
+    pair_gram = pair_gram / float(m)
+    eigvals, eigvecs = torch.linalg.eigh(pair_gram)
+    keep = eigvals > eig_tol * eigvals.max().clamp_min(1.0)
+    eigvals = eigvals[keep]
+    eigvecs = eigvecs[:, keep]
+    rank = int(eigvals.numel())
+    if rank == 0:
+        empty = torch.zeros((n, n, 0), device=samples.device, dtype=samples.dtype)
+        return empty, empty, 0
+
+    del chunk_size
+    coordinate_basis = eigvecs.T.reshape(-1, q, q)
+    coordinate_basis = (coordinate_basis + coordinate_basis.transpose(1, 2)) / 2
+    lifted = torch.einsum("ia,rab,jb->rij", subspace, coordinate_basis, subspace)
+    left = coefficient * eigvals[:, None, None] * lifted
+    right = lifted
+    return left.permute(1, 2, 0), right.permute(1, 2, 0), rank
+
+
+def _gram_scalar_statistics(samples: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    samples64 = samples.to(dtype=torch.float64)
+    squared_norms = samples64.square().sum(dim=1)
+    U = squared_norms.sum()
+    V = squared_norms.square().sum()
+    gram_square_sum = (samples64.T @ samples64).square().sum()
+    W = gram_square_sum - V
+    return U, V, W
+
+
+def unknown_a_tau_raw_estimate(
+    *,
+    samples: torch.Tensor,
+    n: int,
+    p: int,
+    gram_chunk_size: int,
+) -> torch.Tensor:
+    m = samples.shape[0]
+    device = samples.device
+    dtype = torch.float64
+    del gram_chunk_size
+    U, V, W = _gram_scalar_statistics(samples)
+    Z = torch.stack(
+        (
+            torch.ones((), device=device, dtype=dtype),
+            U,
+            U.square(),
+            V,
+            W,
+        )
+    )
+
+    n_f = float(n)
+    p_f = float(p)
+    m_f = float(m)
+    R2 = m_f * p_f * (m_f + p_f - 1.0)
+    R22 = m_f * p_f * (
+        m_f**3 * p_f
+        + 2.0 * m_f**2 * p_f**2
+        - 2.0 * m_f**2 * p_f
+        + m_f * p_f**3
+        - 2.0 * m_f * p_f**2
+        + 5.0 * m_f * p_f
+        - 4.0 * m_f
+        - 4.0 * p_f
+        + 4.0
+    )
+    R3 = m_f * p_f * (
+        m_f**2 + 3.0 * m_f * p_f - 3.0 * m_f + p_f**2 - 3.0 * p_f + 2.0
+    )
+    R4 = (
+        m_f
+        * p_f
+        * (m_f + p_f - 1.0)
+        * (m_f**2 + 5.0 * m_f * p_f - 5.0 * m_f + p_f**2 - 5.0 * p_f + 4.0)
+    )
+
+    def vec(values: tuple[float, float, float, float, float]) -> torch.Tensor:
+        return torch.tensor(values, device=device, dtype=dtype)
+
+    c0 = vec(
+        (
+            1.0,
+            n_f * m_f * p_f,
+            n_f**2 * m_f**2 * p_f**2,
+            m_f * n_f * p_f**2 * (n_f + 2.0),
+            n_f * m_f * p_f**2 * (m_f - n_f - 2.0),
+        )
+    )
+    c1 = vec((0.0, 0.0, 2.0 * n_f, 0.0, n_f * (n_f + 1.0)))
+    ell1 = vec(
+        (
+            0.0,
+            1.0,
+            2.0 * n_f * m_f * p_f,
+            2.0 * p_f * (n_f + 2.0),
+            2.0 * p_f * (m_f - n_f - 2.0),
+        )
+    )
+    ell2 = vec((0.0, 0.0, 4.0, 0.0, 2.0 * (n_f + 1.0)))
+
+    M = (
+        torch.outer(c0, c0)
+        + (torch.outer(c0, c1) + torch.outer(c1, c0)) * R2
+        + torch.outer(c1, c1) * R22
+        + 2.0
+        * n_f
+        * (
+            torch.outer(ell1, ell1) * R2
+            + (torch.outer(ell1, ell2) + torch.outer(ell2, ell1)) * R3
+            + torch.outer(ell2, ell2) * R4
+        )
+    )
+    gamma = torch.zeros((5, 5), device=device, dtype=dtype)
+    gamma[2, 2] = 8.0 * n_f**2 * R22 + 16.0 * n_f * R4
+    gamma[2, 3] = 8.0 * m_f * n_f * p_f * (n_f + 2.0) * (
+        m_f**2 * p_f
+        + 2.0 * m_f * p_f**2
+        - 2.0 * m_f
+        + p_f**3
+        - 2.0 * p_f**2
+        - p_f
+        + 2.0
+    )
+    gamma[2, 4] = 8.0 * m_f * n_f * p_f * (m_f - 1.0) * (
+        m_f**2 * n_f
+        + m_f**2 * p_f
+        + m_f**2
+        + 5.0 * m_f * n_f * p_f
+        - 5.0 * m_f * n_f
+        + 2.0 * m_f * p_f**2
+        + 3.0 * m_f * p_f
+        - 5.0 * m_f
+        + 4.0 * n_f * p_f**2
+        - 10.0 * n_f * p_f
+        + 6.0 * n_f
+        + p_f**3
+        + 2.0 * p_f**2
+        - 7.0 * p_f
+        + 4.0
+    )
+    gamma[3, 3] = 8.0 * m_f * n_f * p_f * (n_f + 2.0) * (
+        3.0 * m_f * p_f - 2.0 * m_f + p_f**3 - 3.0 * p_f + 2.0
+    )
+    gamma[3, 4] = (
+        8.0
+        * m_f
+        * n_f
+        * p_f**2
+        * (m_f - 1.0)
+        * (n_f + 2.0)
+        * (m_f + 2.0 * p_f - 2.0)
+    )
+    gamma[4, 4] = 4.0 * m_f * n_f * p_f * (m_f - 1.0) * (
+        m_f**2 * n_f * p_f
+        + m_f**2 * n_f
+        + m_f**2 * p_f
+        + 3.0 * m_f**2
+        + 2.0 * m_f * n_f * p_f**2
+        + m_f * n_f * p_f
+        - 5.0 * m_f * n_f
+        + 2.0 * m_f * p_f**2
+        + 9.0 * m_f * p_f
+        - 15.0 * m_f
+        + n_f * p_f**3
+        - 2.0 * n_f * p_f**2
+        - 3.0 * n_f * p_f
+        + 4.0 * n_f
+        + p_f**3
+        + 2.0 * p_f**2
+        - 19.0 * p_f
+        + 16.0
+    )
+    gamma = gamma + gamma.T - torch.diag(gamma.diag())
+    M = M + gamma
+
+    tau0 = -2.0 * p_f * n_f * (n_f + 2.0)
+    q = vec(
+        (
+            0.0,
+            0.0,
+            -16.0 * p_f * n_f * (n_f + 2.0) * m_f**2,
+            -16.0 * p_f * n_f * (n_f + 2.0) * m_f,
+            -16.0 * p_f * n_f * (n_f + 2.0) * m_f * (m_f - 1.0),
+        )
+    )
+    b = (
+        tau0 * (c0 + c1 * R2)
+        - 8.0 * n_f * (n_f + 2.0) * (ell1 * m_f * p_f + ell2 * R2)
+        + q
+    )
+    try:
+        theta = torch.linalg.solve(M, b)
+    except torch.linalg.LinAlgError:
+        theta = torch.linalg.pinv(M) @ b
+    return torch.dot(theta, Z)
+
+
+def unknown_a_input_cumulants(
+    *,
+    data_generator: ICADataGenerator,
+    m: int,
+    seed: int,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    eig_tol: float,
+    gram_chunk_size: int,
+) -> tuple[dict[int, torch.Tensor | FactoredTensor4 | HTensor], int | None]:
+    samples = data_generator.sample(m, seed_=seed).to(device=device, dtype=dtype)
+    n = samples.shape[1]
+    p = data_generator.p
+    eye = torch.eye(n, device=device, dtype=dtype)
+    cumulants: dict[int, torch.Tensor | FactoredTensor4 | HTensor] = {
+        1: torch.zeros(n, device=device, dtype=dtype),
+    }
+    energy = samples.square().sum()
+    if k_max == 1:
+        sigma2 = float(p * (p - 1)) / float(m + p - 1)
+        sigma2 = sigma2 + energy / float(n * (m + p - 1))
+        cumulants[2] = sigma2 * eye
+        return cumulants, None
+
+    x2 = samples.T @ samples / float(m)
+    second_a = float(p * (p - 1)) / float(m + p - 1)
+    second_b = float(m) / float(m + p - 1)
+    cumulants[2] = second_a * eye + second_b * x2
+    rank4: int | None = None
+
+    if k_max == 3:
+        tau_raw = unknown_a_tau_raw_estimate(
+            samples=samples,
+            n=n,
+            p=p,
+            gram_chunk_size=gram_chunk_size,
+        )
+        core = (3.0 * tau_raw / (float(n) * float(n + 2))).to(device=device, dtype=dtype)
+        cumulants[4] = HTensor(core=core, r=2, n=n)
+    if k_max >= 4:
+        lambda2 = float(m) / float(m + p - 1)
+        gamma = float(m) / float(p**3 + (m - 1) * (3 * p - 2))
+        beta = lambda2 - float(p) * gamma
+        alpha = float(p) - 2.0 * float(p) * lambda2 + float(p * p) * gamma
+
+        const_left = (-6.0 * alpha * eye)[:, :, None]
+        const_right = eye[:, :, None]
+        square_left = (-12.0 * beta * x2)[:, :, None]
+        square_right = eye[:, :, None]
+        s4_left, s4_right, rank4 = _compressed_s4_factors_from_samples(
+            samples=samples,
+            coefficient=-2.0 * gamma,
+            eig_tol=eig_tol,
+            chunk_size=gram_chunk_size,
+        )
+        cumulants[4] = FactoredTensor4(
+            n=n,
+            factors=(
+                torch.cat((const_left, square_left, s4_left), dim=2),
+                torch.cat((const_right, square_right, s4_right), dim=2),
+            ),
+            device=eye.device,
+            dtype=dtype,
+            assume_symmetric=True,
+        )
+
+    return cumulants, rank4
 
 
 def sample_average_input_cumulants(
@@ -671,7 +1058,7 @@ def run_cumulant_experiments(
     *,
     args: argparse.Namespace,
     model: DeepReLUMLP,
-    data_generator: ICADataGenerator,
+    data_generator: ICADataGenerator | GaussianDataGenerator | GaussianLowRankDataGenerator,
     true_mean: torch.Tensor,
     device: torch.device,
 ) -> list[CumulantResult]:
@@ -693,28 +1080,145 @@ def run_cumulant_experiments(
                 ),
             )
         ]
-    else:
+    elif args.input_distribution == "gaussian_lowrank":
         builders = [
             (
-                "prior",
-                lambda k_max: prior_input_cumulants(
-                    n=args.n,
-                    p=args.p,
-                    k_max=k_max,
-                    device=device,
-                    dtype=dtype,
-                ),
-            ),
-            (
                 "known_distribution",
-                lambda k_max: known_distribution_input_cumulants(
+                lambda k_max: known_lowrank_gaussian_input_cumulants(
                     data_generator=data_generator,
                     k_max=k_max,
                     device=device,
                     dtype=dtype,
                 ),
-            ),
+            )
         ]
+    else:
+        available_builders = {
+            "prior": lambda k_max: prior_input_cumulants(
+                n=args.n,
+                p=args.p,
+                k_max=k_max,
+                device=device,
+                dtype=dtype,
+            ),
+            "known_distribution": lambda k_max: known_distribution_input_cumulants(
+                data_generator=data_generator,
+                k_max=k_max,
+                device=device,
+                dtype=dtype,
+            ),
+        }
+        builders = [
+            (method, available_builders[method])
+            for method in args.fixed_cumulant_methods
+        ]
+
+    def sample_cumulant_jobs(
+        *,
+        cumulant_k_max: int,
+        sample_k: int,
+        sample_count: int,
+        seed: int,
+    ):
+        if args.input_distribution == "gaussian":
+            yield (
+                "gaussian_exact",
+                lambda method_k=cumulant_k_max: (
+                    gaussian_input_cumulants(
+                        n=args.n,
+                        p=args.p,
+                        k_max=method_k,
+                        device=device,
+                        dtype=dtype,
+                    ),
+                    None,
+                ),
+                lambda rank4, method_k=cumulant_k_max: _gaussian_initialization_flops(
+                    n=args.n,
+                    p=args.p,
+                    k_max=method_k,
+                    rank4=rank4,
+                ),
+            )
+            return
+        if args.input_distribution == "gaussian_lowrank":
+            return
+
+        if args.sample_cumulant_estimator in {"source_compressed", "both"}:
+            yield (
+                "sample_avg",
+                lambda method_k=cumulant_k_max, count=sample_count, seed_=seed: sample_average_input_cumulants(
+                    data_generator=data_generator,
+                    m=count,
+                    seed=seed_,
+                    k_max=method_k,
+                    device=device,
+                    dtype=dtype,
+                    eig_tol=args.sample_fourth_eig_tol,
+                ),
+                lambda rank4, method_k=cumulant_k_max, count=sample_count: _sample_initialization_flops(
+                    n=args.n,
+                    p=args.p,
+                    sample_count=count,
+                    k_max=method_k,
+                    rank4=rank4,
+                ),
+            )
+        if args.sample_cumulant_estimator in {"unknown_a", "both"}:
+            yield (
+                "unknown_a",
+                lambda method_k=cumulant_k_max, count=sample_count, seed_=seed: unknown_a_input_cumulants(
+                    data_generator=data_generator,
+                    m=count,
+                    seed=seed_,
+                    k_max=method_k,
+                    device=device,
+                    dtype=dtype,
+                    eig_tol=args.sample_fourth_eig_tol,
+                    gram_chunk_size=args.unknown_a_gram_chunk_size,
+                ),
+                lambda rank4, method_k=cumulant_k_max, count=sample_count: _unknown_a_initialization_flops(
+                    n=args.n,
+                    p=args.p,
+                    sample_count=count,
+                    k_max=method_k,
+                    rank4=rank4,
+                ),
+            )
+
+    def fixed_initialization_flops(
+        *,
+        method_name: str,
+        method_k: int,
+        rank4: int | None,
+    ) -> int:
+        if args.input_distribution == "gaussian":
+            return _gaussian_initialization_flops(
+                n=args.n,
+                p=args.p,
+                k_max=method_k,
+                rank4=rank4,
+            )
+        if args.input_distribution == "gaussian_lowrank":
+            return _known_lowrank_gaussian_initialization_flops(
+                n=args.n,
+                p=args.p,
+                k_max=method_k,
+                rank4=rank4,
+            )
+        if method_name == "prior":
+            return _prior_initialization_flops(
+                n=args.n,
+                p=args.p,
+                k_max=method_k,
+                rank4=rank4,
+            )
+        return _known_distribution_initialization_flops(
+            n=args.n,
+            p=args.p,
+            k_max=method_k,
+            rank4=rank4,
+        )
 
     for cumulant_k_max in args.cumulant_orders:
         for method, build_cumulants in builders:
@@ -734,28 +1238,10 @@ def run_cumulant_experiments(
                 ),
                 propagation_flop_cache=propagation_flop_cache,
                 estimate_initialization_flops=(
-                    lambda rank4, method_name=method, method_k=cumulant_k_max: (
-                        _gaussian_initialization_flops(
-                            n=args.n,
-                            p=args.p,
-                            k_max=method_k,
-                            rank4=rank4,
-                        )
-                        if args.input_distribution == "gaussian"
-                        else
-                        _prior_initialization_flops(
-                            n=args.n,
-                            p=args.p,
-                            k_max=method_k,
-                            rank4=rank4,
-                        )
-                        if method_name == "prior"
-                        else _known_distribution_initialization_flops(
-                            n=args.n,
-                            p=args.p,
-                            k_max=method_k,
-                            rank4=rank4,
-                        )
+                    lambda rank4, method_name=method, method_k=cumulant_k_max: fixed_initialization_flops(
+                        method_name=method_name,
+                        method_k=method_k,
+                        rank4=rank4,
                     )
                 ),
             )
@@ -770,71 +1256,33 @@ def run_cumulant_experiments(
         for sample_k in range(args.sample_cumulant_k_min, args.sample_cumulant_k_max + 1):
             sample_count = 2**sample_k
             seed = args.cumulant_sample_seed_base + sample_k * args.seed_stride
-            if args.input_distribution == "gaussian":
-                method = "gaussian_exact"
-                build_cumulants = (
-                    lambda method_k=cumulant_k_max: (
-                        gaussian_input_cumulants(
-                            n=args.n,
-                            p=args.p,
-                            k_max=method_k,
-                            device=device,
-                            dtype=dtype,
-                        ),
-                        None,
-                    )
-                )
-                estimate_initialization_flops = (
-                    lambda rank4, method_k=cumulant_k_max: _gaussian_initialization_flops(
-                        n=args.n,
-                        p=args.p,
-                        k_max=method_k,
-                        rank4=rank4,
-                    )
-                )
-            else:
-                method = "sample_avg"
-                build_cumulants = (
-                    lambda method_k=cumulant_k_max, count=sample_count, seed_=seed: sample_average_input_cumulants(
-                        data_generator=data_generator,
-                        m=count,
-                        seed=seed_,
-                        k_max=method_k,
-                        device=device,
-                        dtype=dtype,
-                        eig_tol=args.sample_fourth_eig_tol,
-                    )
-                )
-                estimate_initialization_flops = (
-                    lambda rank4, method_k=cumulant_k_max, count=sample_count: _sample_initialization_flops(
-                        n=args.n,
-                        p=args.p,
-                        sample_count=count,
-                        k_max=method_k,
-                        rank4=rank4,
-                    )
-                )
-            result = _timed_cumulant_result(
-                args=args,
-                model=model,
-                true_mean=true_mean,
-                device=device,
-                dtype=dtype,
-                method=method,
+            for method, build_cumulants, estimate_initialization_flops in sample_cumulant_jobs(
                 cumulant_k_max=cumulant_k_max,
                 sample_k=sample_k,
                 sample_count=sample_count,
-                build_cumulants=build_cumulants,
-                propagation_flop_cache=propagation_flop_cache,
-                estimate_initialization_flops=estimate_initialization_flops,
-            )
-            results.append(result)
-            rank_text = "" if result.rank4 is None else f" rank4={result.rank4}"
-            print(
-                f"{result.label} m=2^{sample_k} log_sq_error={result.log_squared_error: .6f} "
-                f"warmup={result.warmup_seconds:.2f}s run={result.elapsed_seconds:.2f}s{rank_text}",
-                flush=True,
-            )
+                seed=seed,
+            ):
+                result = _timed_cumulant_result(
+                    args=args,
+                    model=model,
+                    true_mean=true_mean,
+                    device=device,
+                    dtype=dtype,
+                    method=method,
+                    cumulant_k_max=cumulant_k_max,
+                    sample_k=sample_k,
+                    sample_count=sample_count,
+                    build_cumulants=build_cumulants,
+                    propagation_flop_cache=propagation_flop_cache,
+                    estimate_initialization_flops=estimate_initialization_flops,
+                )
+                results.append(result)
+                rank_text = "" if result.rank4 is None else f" rank4={result.rank4}"
+                print(
+                    f"{result.label} m=2^{sample_k} log_sq_error={result.log_squared_error: .6f} "
+                    f"warmup={result.warmup_seconds:.2f}s run={result.elapsed_seconds:.2f}s{rank_text}",
+                    flush=True,
+                )
     return results
 
 
@@ -892,6 +1340,14 @@ def run_experiment(
         data_generator = GaussianDataGenerator(
             n=args.n,
             seed=args.gaussian_seed,
+            p=args.p,
+            device=device,
+            dtype=torch.float32,
+        )
+    elif args.input_distribution == "gaussian_lowrank":
+        data_generator = GaussianLowRankDataGenerator(
+            n=args.n,
+            seed=args.lowrank_seed,
             p=args.p,
             device=device,
             dtype=torch.float32,
@@ -1330,9 +1786,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n", type=int, default=128)
     parser.add_argument("--depth", type=int, default=8)
     parser.add_argument("--p", type=int, default=32)
-    parser.add_argument("--input-distribution", choices=["ica", "gaussian"], default="ica")
+    parser.add_argument(
+        "--input-distribution",
+        choices=["ica", "gaussian", "gaussian_lowrank"],
+        default="ica",
+    )
     parser.add_argument("--ica-seed", type=int, default=0)
     parser.add_argument("--gaussian-seed", type=int, default=0)
+    parser.add_argument("--lowrank-seed", type=int, default=0)
     parser.add_argument("--mlp-seed", type=int, default=0)
     parser.add_argument("--true-samples", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=4096)
@@ -1349,10 +1810,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cumulant-dtype", choices=["float32", "float64"], default="float32")
     parser.add_argument("--cumulant-factor", action="store_true")
+    parser.add_argument(
+        "--fixed-cumulant-methods",
+        type=_parse_fixed_cumulant_methods,
+        default=["prior", "known_distribution"],
+        help="Comma-separated fixed ICA cumulant baselines: prior, known_distribution, or none.",
+    )
     parser.add_argument("--sample-cumulant-k-min", type=int, default=1)
     parser.add_argument("--sample-cumulant-k-max", type=int, default=15)
+    parser.add_argument(
+        "--sample-cumulant-estimator",
+        choices=["source_compressed", "unknown_a", "both"],
+        default="source_compressed",
+        help="ICA sample cumulant estimator. source_compressed keeps the legacy path that uses A/sources for compact K4 storage; unknown_a uses observations only.",
+    )
     parser.add_argument("--cumulant-sample-seed-base", type=int, default=2_000_000_000)
     parser.add_argument("--sample-fourth-eig-tol", type=float, default=1e-6)
+    parser.add_argument(
+        "--unknown-a-gram-chunk-size",
+        type=int,
+        default=2048,
+        help="Compatibility option for unknown-A estimators; current implementation avoids dense sample-Gram chunks.",
+    )
     parser.add_argument(
         "--skip-flop-counts",
         action="store_true",
@@ -1379,6 +1858,8 @@ def main() -> None:
     print(f"n={args.n} depth={args.depth} p={args.p}", flush=True)
     print(f"true_samples={args.true_samples} batch_size={args.batch_size}", flush=True)
     print(f"runs_per_k={args.runs}", flush=True)
+    print(f"fixed_cumulant_methods={args.fixed_cumulant_methods}", flush=True)
+    print(f"sample_cumulant_estimator={args.sample_cumulant_estimator}", flush=True)
 
     run_results, summary_results, cumulant_results = run_experiment(args)
     run_csv_path = args.output_dir / "run_results.csv"
