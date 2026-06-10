@@ -129,6 +129,13 @@ def _check_and_cast_cumulants(
                 raise ValueError(f"K[{order}] has width {value.n}; expected {n}.")
             cast[order] = value.to(device=device, dtype=dtype)
             continue
+        if hasattr(value, "contract_W") and hasattr(value, "n"):
+            if value.n != n:
+                raise ValueError(f"K[{order}] has width {value.n}; expected {n}.")
+            if getattr(value, "d", order) != order:
+                raise ValueError(f"K[{order}] reports order {value.d}; expected {order}.")
+            cast[order] = value
+            continue
         if not isinstance(value, Tensor):
             raise TypeError(f"K[{order}] must be a torch.Tensor or HTensor; got {type(value)!r}.")
         if tuple(value.shape) != expected_shape:

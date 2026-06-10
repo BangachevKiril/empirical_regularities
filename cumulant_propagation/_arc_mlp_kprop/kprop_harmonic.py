@@ -403,12 +403,21 @@ def coerce_input(
     K: dict[int, Float[Tensor, "*n"]], k_max: int, kind: Kind=SIMPLE
 ) -> HTower:
     d_max = max(K.keys())
-    device = K[d_max].device
-    dtype = K[d_max].dtype
-    n = K[d_max].shape[0]
+    reference = K[d_max]
+    device = getattr(reference, "device", None)
+    dtype = getattr(reference, "dtype", None)
+    if device is None:
+        device = reference.core.device
+    if dtype is None:
+        dtype = reference.core.dtype
+    n = reference.shape[0] if hasattr(reference, "shape") else reference.n
     K_out: HTower = {}
     for d, K_d in K.items():
-        assert K_d.shape == (n,) * d, f"K[{d}] must have shape (n,)*{d}."
+        if hasattr(K_d, "shape"):
+            assert K_d.shape == (n,) * d, f"K[{d}] must have shape (n,)*{d}."
+        else:
+            assert K_d.n == n, f"K[{d}] must have width {n}."
+            assert getattr(K_d, "d", d) == d, f"K[{d}] must have order {d}."
         r = get_r_x(d, k_max, kind=kind)
         if r == -1:
             continue
@@ -416,6 +425,12 @@ def coerce_input(
             K_out[d] = K_d.to(device=device, dtype=dtype)
         elif isinstance(K_d, DSTensor):
             K_out[d] = DS_harmonic_proj(K_d.to(device=device, dtype=dtype), r_out=r)
+        elif hasattr(K_d, "contract_W"):
+            if r != 0:
+                raise NotImplementedError(
+                    f"Factored input K[{d}] is only supported when r_out=0; got {r}."
+                )
+            K_out[d] = K_d
         else:
             assert isinstance(K_d, Tensor), f"K[{d}] must be a Tensor, HTensor, or DSTensor, got {type(K_d)!r}"
             K_out[d] = proj_geq_r(K_d.to(device=device, dtype=dtype), n=n, r_out=r)

@@ -10,7 +10,10 @@ from pathlib import Path
 import torch
 
 from cumulant_propagation import propagate_cumulants
-from data_generators import ICADataGenerator
+from cumulant_propagation._arc_mlp_kprop.diagslice import DSTensor
+from cumulant_propagation._arc_mlp_kprop.factor_k4 import FactoredTensor4
+from cumulant_propagation._arc_mlp_kprop.flop_utils import NamedFlopCounter
+from data_generators import GaussianDataGenerator, ICADataGenerator
 from inference_models import DeepReLUMLP
 
 
@@ -21,6 +24,9 @@ class RunResult:
     run: int
     seed_base: int
     squared_error: float
+    elapsed_seconds: float
+    forward_seconds: float
+    forward_flops: int
 
     @property
     def log_squared_error(self) -> float:
@@ -36,18 +42,56 @@ class SummaryResult:
     std_squared_error: float
     mean_log_squared_error: float
     std_log_squared_error: float
+    mean_elapsed_seconds: float
+    std_elapsed_seconds: float
+    mean_forward_seconds: float
+    std_forward_seconds: float
+    forward_flops: int
+    mean_forward_flops_per_second: float
+
+
+@dataclass(frozen=True)
+class MeanStreamResult:
+    mean: torch.Tensor
+    elapsed_seconds: float
+    forward_seconds: float
+    forward_flops: int
 
 
 @dataclass(frozen=True)
 class CumulantResult:
+    method: str
     cumulant_k_max: int
-    input_variance: float
+    sample_k: int | None
+    sample_count: int | None
     squared_error: float
     elapsed_seconds: float
+    warmup_seconds: float
+    rank4: int | None = None
+    initialization_flops: int | None = None
+    propagation_flops: int | None = None
 
     @property
     def log_squared_error(self) -> float:
         return math.log(self.squared_error)
+
+    @property
+    def propagation_label(self) -> str:
+        return _propagation_label(self.cumulant_k_max)
+
+    @property
+    def display_method(self) -> str:
+        return self.method.replace("_", " ")
+
+    @property
+    def label(self) -> str:
+        return f"{self.display_method} {self.propagation_label}"
+
+    @property
+    def total_flops(self) -> int | None:
+        if self.initialization_flops is None or self.propagation_flops is None:
+            return None
+        return self.initialization_flops + self.propagation_flops
 
 
 def _mean(values: list[float]) -> float:
@@ -62,6 +106,101 @@ def _sample_std(values: list[float]) -> float:
     return math.sqrt(variance)
 
 
+def _propagation_label(cumulant_k_max: int) -> str:
+    if cumulant_k_max == 1:
+        return "mean"
+    if cumulant_k_max == 2:
+        return "covariance"
+    return f"K={cumulant_k_max}"
+
+
+def _mlp_forward_flops(*, n: int, depth: int, sample_count: int) -> int:
+    return int(sample_count) * int(depth) * (2 * int(n) * int(n) + int(n))
+
+
+def _ica_sample_flops(*, n: int, p: int, sample_count: int) -> int:
+    # Count x = r @ A.T and the sign scaling. RNG cost is not included.
+    return int(sample_count) * (2 * int(p) * int(n) + 2 * int(p))
+
+
+def _k2_estimator_flops(*, n: int, sample_count: int) -> int:
+    # X2 = X.T @ X plus scale/adds for a*I + b*X2.
+    return 2 * int(sample_count) * int(n) * int(n) + 3 * int(n) * int(n)
+
+
+def _sample_k4_estimator_flops(
+    *,
+    n: int,
+    p: int,
+    sample_count: int,
+    rank4: int | None,
+) -> int:
+    pair_dim = int(p) * int(p)
+    rank = int(rank4) if rank4 is not None else min(int(sample_count), int(p) * (int(p) + 1) // 2)
+    pair_features = int(sample_count) * pair_dim
+    gram = 2 * int(sample_count) * pair_dim * pair_dim
+    symmetric_eigh = int(round((10.0 / 3.0) * pair_dim**3))
+    lift = rank * (2 * int(n) * int(p) * int(p) + 2 * int(n) * int(n) * int(p))
+    scale_and_pack = 3 * rank * int(n) * int(n)
+    return pair_features + gram + symmetric_eigh + lift + scale_and_pack
+
+
+def _prior_initialization_flops(
+    *,
+    n: int,
+    p: int,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    flops = int(n)
+    if k_max >= 4:
+        flops += 2 * int(n) * int(n)
+    return flops
+
+
+def _known_distribution_initialization_flops(
+    *,
+    n: int,
+    p: int,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    flops = 2 * int(n) * int(n) * int(p)
+    if k_max >= 4:
+        flops += 2 * int(n) * int(n) * int(p)
+    return flops
+
+
+def _gaussian_initialization_flops(
+    *,
+    n: int,
+    p: int | float,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    return int(n)
+
+
+def _sample_initialization_flops(
+    *,
+    n: int,
+    p: int,
+    sample_count: int,
+    k_max: int,
+    rank4: int | None = None,
+) -> int:
+    flops = _ica_sample_flops(n=n, p=p, sample_count=sample_count)
+    flops += _k2_estimator_flops(n=n, sample_count=sample_count)
+    if k_max >= 4:
+        flops += _sample_k4_estimator_flops(
+            n=n,
+            p=p,
+            sample_count=sample_count,
+            rank4=rank4,
+        )
+    return flops
+
+
 def stream_mlp_mean(
     *,
     model: DeepReLUMLP,
@@ -69,7 +208,7 @@ def stream_mlp_mean(
     total_samples: int,
     batch_size: int,
     seed_base: int,
-) -> torch.Tensor:
+) -> MeanStreamResult:
     output_sum = torch.zeros(
         data_generator.n,
         device=data_generator.device,
@@ -77,39 +216,606 @@ def stream_mlp_mean(
     )
     samples_seen = 0
     batch_index = 0
+    forward_seconds = 0.0
+    stream_start = time.time()
 
     with torch.inference_mode():
         while samples_seen < total_samples:
             current_batch = min(batch_size, total_samples - samples_seen)
             samples = data_generator.sample(current_batch, seed_=seed_base + batch_index)
+            _sync_if_cuda(data_generator.device)
+            forward_start = time.time()
             outputs = model(samples.T.contiguous())
+            _sync_if_cuda(data_generator.device)
+            forward_seconds += time.time() - forward_start
             output_sum += outputs.to(dtype=torch.float64).sum(dim=1)
             samples_seen += current_batch
             batch_index += 1
 
-    return output_sum / total_samples
+    _sync_if_cuda(data_generator.device)
+    return MeanStreamResult(
+        mean=output_sum / total_samples,
+        elapsed_seconds=time.time() - stream_start,
+        forward_seconds=forward_seconds,
+        forward_flops=_mlp_forward_flops(
+            n=data_generator.n,
+            depth=model.L,
+            sample_count=total_samples,
+        ),
+    )
+
+
+def _cumulant_dtype(name: str) -> torch.dtype:
+    if name == "float32":
+        return torch.float32
+    if name == "float64":
+        return torch.float64
+    raise ValueError(f"Unsupported cumulant dtype: {name}.")
+
+
+def _parse_cumulant_orders(value: str) -> list[int]:
+    orders = [int(part.strip()) for part in value.split(",") if part.strip()]
+    if not orders:
+        raise argparse.ArgumentTypeError("must provide at least one cumulant order")
+    if any(order < 1 for order in orders):
+        raise argparse.ArgumentTypeError("cumulant orders must be at least 1")
+    return orders
+
+
+def _sync_if_cuda(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def prior_input_cumulants(
+    *,
+    n: int,
+    p: int,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict[int, torch.Tensor | FactoredTensor4]:
+    eye = torch.eye(n, device=device, dtype=dtype)
+    cumulants = {
+        1: torch.zeros(n, device=device, dtype=dtype),
+        2: float(p) * eye,
+    }
+    if k_max >= 4:
+        zeros_2 = torch.zeros((n, n), device=eye.device, dtype=dtype)
+        zeros_3 = torch.zeros((n, n, n), device=eye.device, dtype=dtype)
+        pair_slice = torch.full((n, n), -2.0 * float(p), device=eye.device, dtype=dtype)
+        pair_slice.diagonal().zero_()
+        repeated = DSTensor(
+            {
+                (4,): torch.full((n,), -6.0 * float(p), device=eye.device, dtype=dtype),
+                (3, 1): zeros_2,
+                (2, 2): pair_slice,
+                (2, 1, 1): zeros_3,
+            },
+            n=n,
+            d=4,
+            device=eye.device,
+            dtype=dtype,
+        )
+        cumulants[4] = FactoredTensor4(
+            n=n,
+            factors=(
+                (-6.0 * float(p) * eye)[:, :, None],
+                eye[:, :, None],
+            ),
+            repeated=repeated,
+            device=eye.device,
+            dtype=dtype,
+            assume_symmetric=True,
+        )
+    return cumulants
+
+
+def gaussian_input_cumulants(
+    *,
+    n: int,
+    p: int | float,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict[int, torch.Tensor | FactoredTensor4]:
+    eye = torch.eye(n, device=device, dtype=dtype)
+    return {
+        1: torch.zeros(n, device=device, dtype=dtype),
+        2: float(p) * eye,
+    }
+
+
+def known_distribution_input_cumulants(
+    *,
+    data_generator: ICADataGenerator,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> dict[int, torch.Tensor | FactoredTensor4]:
+    # ICADataGenerator samples x = r @ A.T with A shaped (n, p), so source
+    # component vectors in input space are the columns of A.
+    A = data_generator.A.to(device=device, dtype=dtype)
+    n = A.shape[0]
+    cumulants = {
+        1: torch.zeros(n, device=device, dtype=dtype),
+        2: A @ A.T,
+    }
+    if k_max >= 4:
+        pair_factors = A[:, None, :] * A[None, :, :]
+        cumulants[4] = FactoredTensor4(
+            n=n,
+            factors=(-2.0 * pair_factors, pair_factors),
+            device=A.device,
+            dtype=dtype,
+            assume_symmetric=True,
+        )
+    return cumulants
+
+
+def _make_generator(device: torch.device, seed: int) -> torch.Generator:
+    generator = torch.Generator(device=device)
+    generator.manual_seed(int(seed))
+    return generator
+
+
+def _sample_ica_with_sources(
+    data_generator: ICADataGenerator,
+    *,
+    m: int,
+    seed: int,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    generator = _make_generator(data_generator.device, seed)
+    signs = torch.randint(
+        low=0,
+        high=2,
+        size=(m, data_generator.p),
+        generator=generator,
+        device=data_generator.device,
+    )
+    sources = signs.to(dtype=dtype).mul_(2).sub_(1)
+    A = data_generator.A.to(dtype=dtype)
+    samples = sources @ A.T
+    return samples, sources
+
+
+def _compressed_s4_factors_from_sources(
+    *,
+    A: torch.Tensor,
+    sources: torch.Tensor,
+    coefficient: float,
+    eig_tol: float,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    m, p = sources.shape
+    pair_features = torch.einsum("ma,mb->mab", sources, sources).reshape(m, p * p)
+    gram = pair_features.T @ pair_features
+    gram = gram / float(m)
+    eigvals, eigvecs = torch.linalg.eigh(gram)
+    keep = eigvals > eig_tol * eigvals.max().clamp_min(1.0)
+    eigvals = eigvals[keep]
+    eigvecs = eigvecs[:, keep]
+    basis = eigvecs.T.reshape(-1, p, p)
+    basis = (basis + basis.transpose(1, 2)) / 2
+    lifted = torch.einsum("ia,rab,jb->rij", A, basis, A)
+    left = coefficient * eigvals[:, None, None] * lifted
+    right = lifted
+    return left.permute(1, 2, 0), right.permute(1, 2, 0), int(eigvals.numel())
+
+
+def sample_average_input_cumulants(
+    *,
+    data_generator: ICADataGenerator,
+    m: int,
+    seed: int,
+    k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    eig_tol: float,
+) -> tuple[dict[int, torch.Tensor | FactoredTensor4], int | None]:
+    samples, sources = _sample_ica_with_sources(
+        data_generator,
+        m=m,
+        seed=seed,
+        dtype=dtype,
+    )
+    samples = samples.to(device=device, dtype=dtype)
+    sources = sources.to(device=device, dtype=dtype)
+    n = samples.shape[1]
+    p = data_generator.p
+    eye = torch.eye(n, device=device, dtype=dtype)
+    x2 = samples.T @ samples / float(m)
+
+    second_a = float(p * (p - 1)) / float(m + p - 1)
+    second_b = float(m) / float(m + p - 1)
+    # Finite samples can have odd empirical moments. For this ICA experiment we
+    # use the distributional symmetry and always set input odd cumulants to zero.
+    cumulants: dict[int, torch.Tensor | FactoredTensor4] = {
+        1: torch.zeros(n, device=device, dtype=dtype),
+        2: second_a * eye + second_b * x2,
+    }
+    rank4: int | None = None
+
+    if k_max >= 4:
+        q2 = float(m) / float(m + p - 1)
+        q4 = float(m) / float(p**3 + (m - 1) * (3 * p - 2))
+        alpha = float(p) - 2.0 * float(p) * q2 + float(p * p) * q4
+        beta = q2 - float(p) * q4
+        gamma = q4
+
+        const_left = (-6.0 * alpha * eye)[:, :, None]
+        const_right = eye[:, :, None]
+        square_left = (-12.0 * beta * x2)[:, :, None]
+        square_right = eye[:, :, None]
+        s4_left, s4_right, rank4 = _compressed_s4_factors_from_sources(
+            A=data_generator.A.to(device=device, dtype=dtype),
+            sources=sources,
+            coefficient=-2.0 * gamma,
+            eig_tol=eig_tol,
+        )
+        cumulants[4] = FactoredTensor4(
+            n=n,
+            factors=(
+                torch.cat((const_left, square_left, s4_left), dim=2),
+                torch.cat((const_right, square_right, s4_right), dim=2),
+            ),
+            device=eye.device,
+            dtype=dtype,
+            assume_symmetric=True,
+        )
+
+    return cumulants, rank4
 
 
 def cumulant_propagation_mean(
     *,
     model: DeepReLUMLP,
-    p: int,
+    cumulants: dict[int, torch.Tensor | FactoredTensor4],
     cumulant_k_max: int,
+    factor: bool,
     device: torch.device,
+    dtype: torch.dtype,
 ) -> torch.Tensor:
-    cumulants = {
-        1: torch.zeros(model.n, device=device, dtype=torch.float64),
-        2: float(p) * torch.eye(model.n, device=device, dtype=torch.float64),
-    }
     propagated = propagate_cumulants(
         model,
         cumulants,
         k_max=cumulant_k_max,
-        return_tensors=True,
+        factor=factor,
+        return_tensors=False,
         device=device,
-        dtype=torch.float64,
+        dtype=dtype,
     )
-    return propagated[1].to(dtype=torch.float64)
+    mean = propagated[1]
+    if hasattr(mean, "to_tensor"):
+        mean = mean.to_tensor()
+    return mean.to(dtype=torch.float64)
+
+
+def _run_cumulant_once(
+    *,
+    args: argparse.Namespace,
+    model: DeepReLUMLP,
+    true_mean: torch.Tensor,
+    cumulant_k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    build_cumulants,
+) -> tuple[float, int | None]:
+    cumulants, rank4 = build_cumulants()
+    mean = cumulant_propagation_mean(
+        model=model,
+        cumulants=cumulants,
+        cumulant_k_max=cumulant_k_max,
+        factor=args.cumulant_factor,
+        device=device,
+        dtype=dtype,
+    )
+    _sync_if_cuda(device)
+    squared_error = torch.sum((mean - true_mean) ** 2).item()
+    del cumulants, mean
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    return squared_error, rank4
+
+
+def _count_cumulant_propagation_flops(
+    *,
+    args: argparse.Namespace,
+    model: DeepReLUMLP,
+    cumulant_k_max: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    build_cumulants,
+) -> tuple[int | None, int | None]:
+    if args.skip_flop_counts:
+        return None, None
+    cumulants, rank4 = build_cumulants()
+    try:
+        with NamedFlopCounter() as counter:
+            _ = cumulant_propagation_mean(
+                model=model,
+                cumulants=cumulants,
+                cumulant_k_max=cumulant_k_max,
+                factor=args.cumulant_factor,
+                device=device,
+                dtype=dtype,
+            )
+        _sync_if_cuda(device)
+        return counter.total(), rank4
+    finally:
+        del cumulants
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+
+def _propagation_flop_cache_key(
+    *,
+    method: str,
+    cumulant_k_max: int,
+    rank4: int | None,
+    factor: bool,
+    dtype: torch.dtype,
+) -> tuple[int, bool, str, int | str]:
+    # The propagation FLOP counter is far slower than the propagation itself for
+    # high-rank sample K4 inputs. We count each sampled order once and keep the
+    # sample-count/rank dependence in the initialization FLOP estimate.
+    if method in {"sample_avg", "gaussian_exact"}:
+        rank_or_method: int | str = method
+    else:
+        rank_or_method = rank4 if rank4 is not None else method
+    return cumulant_k_max, factor, str(dtype), rank_or_method
+
+
+def _timed_cumulant_result(
+    *,
+    args: argparse.Namespace,
+    model: DeepReLUMLP,
+    true_mean: torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+    method: str,
+    cumulant_k_max: int,
+    sample_k: int | None,
+    sample_count: int | None,
+    build_cumulants,
+    estimate_initialization_flops,
+    propagation_flop_cache: dict[tuple[int, bool, str, int | str], tuple[int | None, int | None]]
+    | None = None,
+) -> CumulantResult:
+    _sync_if_cuda(device)
+    warmup_start = time.time()
+    _run_cumulant_once(
+        args=args,
+        model=model,
+        true_mean=true_mean,
+        cumulant_k_max=cumulant_k_max,
+        device=device,
+        dtype=dtype,
+        build_cumulants=build_cumulants,
+    )
+    _sync_if_cuda(device)
+    warmup_seconds = time.time() - warmup_start
+
+    _sync_if_cuda(device)
+    start = time.time()
+    squared_error, rank4 = _run_cumulant_once(
+        args=args,
+        model=model,
+        true_mean=true_mean,
+        cumulant_k_max=cumulant_k_max,
+        device=device,
+        dtype=dtype,
+        build_cumulants=build_cumulants,
+    )
+    _sync_if_cuda(device)
+    elapsed = time.time() - start
+    cache_key = _propagation_flop_cache_key(
+        method=method,
+        cumulant_k_max=cumulant_k_max,
+        rank4=rank4,
+        factor=args.cumulant_factor,
+        dtype=dtype,
+    )
+    if propagation_flop_cache is not None and cache_key in propagation_flop_cache:
+        propagation_flops, counted_rank4 = propagation_flop_cache[cache_key]
+    else:
+        propagation_flops, counted_rank4 = _count_cumulant_propagation_flops(
+            args=args,
+            model=model,
+            cumulant_k_max=cumulant_k_max,
+            device=device,
+            dtype=dtype,
+            build_cumulants=build_cumulants,
+        )
+        if propagation_flop_cache is not None:
+            propagation_flop_cache[cache_key] = (propagation_flops, counted_rank4)
+    if rank4 is None:
+        rank4 = counted_rank4
+    initialization_flops = estimate_initialization_flops(rank4)
+
+    return CumulantResult(
+        method=method,
+        cumulant_k_max=cumulant_k_max,
+        sample_k=sample_k,
+        sample_count=sample_count,
+        squared_error=squared_error,
+        elapsed_seconds=elapsed,
+        warmup_seconds=warmup_seconds,
+        rank4=rank4,
+        initialization_flops=initialization_flops,
+        propagation_flops=propagation_flops,
+    )
+
+
+def run_cumulant_experiments(
+    *,
+    args: argparse.Namespace,
+    model: DeepReLUMLP,
+    data_generator: ICADataGenerator,
+    true_mean: torch.Tensor,
+    device: torch.device,
+) -> list[CumulantResult]:
+    dtype = _cumulant_dtype(args.cumulant_dtype)
+    results: list[CumulantResult] = []
+    propagation_flop_cache: dict[
+        tuple[int, bool, str, int | str], tuple[int | None, int | None]
+    ] = {}
+    if args.input_distribution == "gaussian":
+        builders = [
+            (
+                "known_distribution",
+                lambda k_max: gaussian_input_cumulants(
+                    n=args.n,
+                    p=args.p,
+                    k_max=k_max,
+                    device=device,
+                    dtype=dtype,
+                ),
+            )
+        ]
+    else:
+        builders = [
+            (
+                "prior",
+                lambda k_max: prior_input_cumulants(
+                    n=args.n,
+                    p=args.p,
+                    k_max=k_max,
+                    device=device,
+                    dtype=dtype,
+                ),
+            ),
+            (
+                "known_distribution",
+                lambda k_max: known_distribution_input_cumulants(
+                    data_generator=data_generator,
+                    k_max=k_max,
+                    device=device,
+                    dtype=dtype,
+                ),
+            ),
+        ]
+
+    for cumulant_k_max in args.cumulant_orders:
+        for method, build_cumulants in builders:
+            result = _timed_cumulant_result(
+                args=args,
+                model=model,
+                true_mean=true_mean,
+                device=device,
+                dtype=dtype,
+                method=method,
+                cumulant_k_max=cumulant_k_max,
+                sample_k=None,
+                sample_count=None,
+                build_cumulants=lambda method_k=cumulant_k_max, builder=build_cumulants: (
+                    builder(method_k),
+                    None,
+                ),
+                propagation_flop_cache=propagation_flop_cache,
+                estimate_initialization_flops=(
+                    lambda rank4, method_name=method, method_k=cumulant_k_max: (
+                        _gaussian_initialization_flops(
+                            n=args.n,
+                            p=args.p,
+                            k_max=method_k,
+                            rank4=rank4,
+                        )
+                        if args.input_distribution == "gaussian"
+                        else
+                        _prior_initialization_flops(
+                            n=args.n,
+                            p=args.p,
+                            k_max=method_k,
+                            rank4=rank4,
+                        )
+                        if method_name == "prior"
+                        else _known_distribution_initialization_flops(
+                            n=args.n,
+                            p=args.p,
+                            k_max=method_k,
+                            rank4=rank4,
+                        )
+                    )
+                ),
+            )
+            results.append(result)
+            print(
+                f"{result.label} log_sq_error={result.log_squared_error: .6f} "
+                f"warmup={result.warmup_seconds:.2f}s run={result.elapsed_seconds:.2f}s",
+                flush=True,
+            )
+
+    for cumulant_k_max in args.cumulant_orders:
+        for sample_k in range(args.sample_cumulant_k_min, args.sample_cumulant_k_max + 1):
+            sample_count = 2**sample_k
+            seed = args.cumulant_sample_seed_base + sample_k * args.seed_stride
+            if args.input_distribution == "gaussian":
+                method = "gaussian_exact"
+                build_cumulants = (
+                    lambda method_k=cumulant_k_max: (
+                        gaussian_input_cumulants(
+                            n=args.n,
+                            p=args.p,
+                            k_max=method_k,
+                            device=device,
+                            dtype=dtype,
+                        ),
+                        None,
+                    )
+                )
+                estimate_initialization_flops = (
+                    lambda rank4, method_k=cumulant_k_max: _gaussian_initialization_flops(
+                        n=args.n,
+                        p=args.p,
+                        k_max=method_k,
+                        rank4=rank4,
+                    )
+                )
+            else:
+                method = "sample_avg"
+                build_cumulants = (
+                    lambda method_k=cumulant_k_max, count=sample_count, seed_=seed: sample_average_input_cumulants(
+                        data_generator=data_generator,
+                        m=count,
+                        seed=seed_,
+                        k_max=method_k,
+                        device=device,
+                        dtype=dtype,
+                        eig_tol=args.sample_fourth_eig_tol,
+                    )
+                )
+                estimate_initialization_flops = (
+                    lambda rank4, method_k=cumulant_k_max, count=sample_count: _sample_initialization_flops(
+                        n=args.n,
+                        p=args.p,
+                        sample_count=count,
+                        k_max=method_k,
+                        rank4=rank4,
+                    )
+                )
+            result = _timed_cumulant_result(
+                args=args,
+                model=model,
+                true_mean=true_mean,
+                device=device,
+                dtype=dtype,
+                method=method,
+                cumulant_k_max=cumulant_k_max,
+                sample_k=sample_k,
+                sample_count=sample_count,
+                build_cumulants=build_cumulants,
+                propagation_flop_cache=propagation_flop_cache,
+                estimate_initialization_flops=estimate_initialization_flops,
+            )
+            results.append(result)
+            rank_text = "" if result.rank4 is None else f" rank4={result.rank4}"
+            print(
+                f"{result.label} m=2^{sample_k} log_sq_error={result.log_squared_error: .6f} "
+                f"warmup={result.warmup_seconds:.2f}s run={result.elapsed_seconds:.2f}s{rank_text}",
+                flush=True,
+            )
+    return results
 
 
 def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
@@ -122,6 +828,10 @@ def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
         results = by_k[k]
         squared_errors = [result.squared_error for result in results]
         log_squared_errors = [result.log_squared_error for result in results]
+        elapsed_seconds = [result.elapsed_seconds for result in results]
+        forward_seconds = [result.forward_seconds for result in results]
+        forward_flops = results[0].forward_flops
+        mean_forward_seconds = _mean(forward_seconds)
         summaries.append(
             SummaryResult(
                 k=k,
@@ -131,6 +841,14 @@ def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
                 std_squared_error=_sample_std(squared_errors),
                 mean_log_squared_error=_mean(log_squared_errors),
                 std_log_squared_error=_sample_std(log_squared_errors),
+                mean_elapsed_seconds=_mean(elapsed_seconds),
+                std_elapsed_seconds=_sample_std(elapsed_seconds),
+                mean_forward_seconds=mean_forward_seconds,
+                std_forward_seconds=_sample_std(forward_seconds),
+                forward_flops=forward_flops,
+                mean_forward_flops_per_second=forward_flops / mean_forward_seconds
+                if mean_forward_seconds > 0.0
+                else 0.0,
             )
         )
     return summaries
@@ -138,7 +856,7 @@ def summarize_results(run_results: list[RunResult]) -> list[SummaryResult]:
 
 def run_experiment(
     args: argparse.Namespace,
-) -> tuple[list[RunResult], list[SummaryResult], CumulantResult]:
+) -> tuple[list[RunResult], list[SummaryResult], list[CumulantResult]]:
     device = torch.device(args.device)
     torch.manual_seed(args.mlp_seed)
 
@@ -150,48 +868,45 @@ def run_experiment(
     )
     model.eval()
 
-    data_generator = ICADataGenerator(
-        n=args.n,
-        seed=args.ica_seed,
-        p=args.p,
-        device=device,
-        dtype=torch.float32,
-    )
+    if args.input_distribution == "gaussian":
+        data_generator = GaussianDataGenerator(
+            n=args.n,
+            seed=args.gaussian_seed,
+            p=args.p,
+            device=device,
+            dtype=torch.float32,
+        )
+    else:
+        data_generator = ICADataGenerator(
+            n=args.n,
+            seed=args.ica_seed,
+            p=args.p,
+            device=device,
+            dtype=torch.float32,
+        )
 
     start = time.time()
-    true_mean = stream_mlp_mean(
+    true_mean_result = stream_mlp_mean(
         model=model,
         data_generator=data_generator,
         total_samples=args.true_samples,
         batch_size=args.batch_size,
         seed_base=args.true_seed_base,
     )
+    true_mean = true_mean_result.mean
     print(
         f"computed true mean from {args.true_samples} samples "
-        f"in {time.time() - start:.2f}s",
+        f"in {time.time() - start:.2f}s "
+        f"(forward={true_mean_result.forward_seconds:.2f}s)",
         flush=True,
     )
 
-    start = time.time()
-    cumulant_mean = cumulant_propagation_mean(
+    cumulant_results = run_cumulant_experiments(
+        args=args,
         model=model,
-        p=args.p,
-        cumulant_k_max=args.cumulant_k_max,
+        data_generator=data_generator,
+        true_mean=true_mean,
         device=device,
-    )
-    cumulant_elapsed = time.time() - start
-    cumulant_squared_error = torch.sum((cumulant_mean - true_mean) ** 2).item()
-    cumulant_result = CumulantResult(
-        cumulant_k_max=args.cumulant_k_max,
-        input_variance=float(args.p),
-        squared_error=cumulant_squared_error,
-        elapsed_seconds=cumulant_elapsed,
-    )
-    print(
-        f"cumulant propagation k_max={args.cumulant_k_max} "
-        f"log_sq_error={cumulant_result.log_squared_error: .6f} "
-        f"in {cumulant_elapsed:.2f}s",
-        flush=True,
     )
 
     run_results: list[RunResult] = []
@@ -203,13 +918,14 @@ def run_experiment(
                 + k * args.seed_stride
                 + run * args.run_seed_stride
             )
-            mean_estimate = stream_mlp_mean(
+            mean_estimate_result = stream_mlp_mean(
                 model=model,
                 data_generator=data_generator,
                 total_samples=m,
                 batch_size=args.batch_size,
                 seed_base=seed_base,
             )
+            mean_estimate = mean_estimate_result.mean
             squared_error = torch.sum((mean_estimate - true_mean) ** 2).item()
             run_results.append(
                 RunResult(
@@ -218,17 +934,21 @@ def run_experiment(
                     run=run,
                     seed_base=seed_base,
                     squared_error=squared_error,
+                    elapsed_seconds=mean_estimate_result.elapsed_seconds,
+                    forward_seconds=mean_estimate_result.forward_seconds,
+                    forward_flops=mean_estimate_result.forward_flops,
                 )
             )
         summary = summarize_results([result for result in run_results if result.k == k])[0]
         print(
             f"k={k:2d} m={m:6d} "
             f"mean_log_sq_error={summary.mean_log_squared_error: .6f} "
-            f"std={summary.std_log_squared_error: .6f}",
+            f"std={summary.std_log_squared_error: .6f} "
+            f"forward={summary.mean_forward_seconds:.4f}s",
             flush=True,
         )
 
-    return run_results, summarize_results(run_results), cumulant_result
+    return run_results, summarize_results(run_results), cumulant_results
 
 
 def write_run_csv(results: list[RunResult], csv_path: Path) -> None:
@@ -243,6 +963,12 @@ def write_run_csv(results: list[RunResult], csv_path: Path) -> None:
                 "seed_base",
                 "squared_error",
                 "log_squared_error",
+                "elapsed_seconds",
+                "forward_seconds",
+                "non_forward_seconds",
+                "forward_flops",
+                "samples_per_forward_second",
+                "forward_flops_per_second",
             ],
         )
         writer.writeheader()
@@ -255,6 +981,16 @@ def write_run_csv(results: list[RunResult], csv_path: Path) -> None:
                     "seed_base": result.seed_base,
                     "squared_error": result.squared_error,
                     "log_squared_error": result.log_squared_error,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "forward_seconds": result.forward_seconds,
+                    "non_forward_seconds": result.elapsed_seconds - result.forward_seconds,
+                    "forward_flops": result.forward_flops,
+                    "samples_per_forward_second": result.m / result.forward_seconds
+                    if result.forward_seconds > 0.0
+                    else "",
+                    "forward_flops_per_second": result.forward_flops / result.forward_seconds
+                    if result.forward_seconds > 0.0
+                    else "",
                 }
             )
 
@@ -272,6 +1008,13 @@ def write_summary_csv(results: list[SummaryResult], csv_path: Path) -> None:
                 "std_squared_error",
                 "mean_log_squared_error",
                 "std_log_squared_error",
+                "mean_elapsed_seconds",
+                "std_elapsed_seconds",
+                "mean_forward_seconds",
+                "std_forward_seconds",
+                "forward_flops",
+                "mean_samples_per_forward_second",
+                "mean_forward_flops_per_second",
             ],
         )
         writer.writeheader()
@@ -285,33 +1028,107 @@ def write_summary_csv(results: list[SummaryResult], csv_path: Path) -> None:
                     "std_squared_error": result.std_squared_error,
                     "mean_log_squared_error": result.mean_log_squared_error,
                     "std_log_squared_error": result.std_log_squared_error,
+                    "mean_elapsed_seconds": result.mean_elapsed_seconds,
+                    "std_elapsed_seconds": result.std_elapsed_seconds,
+                    "mean_forward_seconds": result.mean_forward_seconds,
+                    "std_forward_seconds": result.std_forward_seconds,
+                    "forward_flops": result.forward_flops,
+                    "mean_samples_per_forward_second": result.m / result.mean_forward_seconds
+                    if result.mean_forward_seconds > 0.0
+                    else "",
+                    "mean_forward_flops_per_second": result.mean_forward_flops_per_second,
                 }
             )
 
 
-def write_cumulant_csv(result: CumulantResult, csv_path: Path) -> None:
+def write_sampling_timing_csv(results: list[RunResult], csv_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
-                "cumulant_k_max",
-                "input_variance",
-                "squared_error",
-                "log_squared_error",
+                "k",
+                "m",
+                "run",
+                "seed_base",
                 "elapsed_seconds",
+                "forward_seconds",
+                "non_forward_seconds",
+                "forward_flops",
+                "samples_per_forward_second",
+                "forward_flops_per_second",
             ],
         )
         writer.writeheader()
-        writer.writerow(
-            {
-                "cumulant_k_max": result.cumulant_k_max,
-                "input_variance": result.input_variance,
-                "squared_error": result.squared_error,
-                "log_squared_error": result.log_squared_error,
-                "elapsed_seconds": result.elapsed_seconds,
-            }
+        for result in results:
+            writer.writerow(
+                {
+                    "k": result.k,
+                    "m": result.m,
+                    "run": result.run,
+                    "seed_base": result.seed_base,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "forward_seconds": result.forward_seconds,
+                    "non_forward_seconds": result.elapsed_seconds - result.forward_seconds,
+                    "forward_flops": result.forward_flops,
+                    "samples_per_forward_second": result.m / result.forward_seconds
+                    if result.forward_seconds > 0.0
+                    else "",
+                    "forward_flops_per_second": result.forward_flops / result.forward_seconds
+                    if result.forward_seconds > 0.0
+                    else "",
+                }
+            )
+
+
+def write_cumulant_csv(results: list[CumulantResult], csv_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "method",
+                "propagation",
+                "cumulant_k_max",
+                "sample_k",
+                "sample_count",
+                "squared_error",
+                "log_squared_error",
+                "elapsed_seconds",
+                "warmup_seconds",
+                "initialization_flops",
+                "propagation_flops",
+                "total_flops",
+                "flops_per_second",
+                "rank4",
+            ],
         )
+        writer.writeheader()
+        for result in results:
+            writer.writerow(
+                {
+                    "method": result.method,
+                    "propagation": result.propagation_label,
+                    "cumulant_k_max": result.cumulant_k_max,
+                    "sample_k": "" if result.sample_k is None else result.sample_k,
+                    "sample_count": "" if result.sample_count is None else result.sample_count,
+                    "squared_error": result.squared_error,
+                    "log_squared_error": result.log_squared_error,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "warmup_seconds": result.warmup_seconds,
+                    "initialization_flops": ""
+                    if result.initialization_flops is None
+                    else result.initialization_flops,
+                    "propagation_flops": ""
+                    if result.propagation_flops is None
+                    else result.propagation_flops,
+                    "total_flops": "" if result.total_flops is None else result.total_flops,
+                    "flops_per_second": ""
+                    if result.total_flops is None or result.elapsed_seconds <= 0.0
+                    else result.total_flops / result.elapsed_seconds,
+                    "rank4": "" if result.rank4 is None else result.rank4,
+                }
+            )
 
 
 def _nice_ticks(min_value: float, max_value: float, count: int) -> list[float]:
@@ -325,7 +1142,7 @@ def write_svg(
     results: list[SummaryResult],
     svg_path: Path,
     *,
-    cumulant_result: CumulantResult | None = None,
+    cumulant_results: list[CumulantResult] | None = None,
 ) -> None:
     svg_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -341,8 +1158,8 @@ def write_svg(
     ]
     x_min, x_max = min(xs), max(xs)
     comparison_ys = [*lower_ys, *upper_ys]
-    if cumulant_result is not None:
-        comparison_ys.append(cumulant_result.log_squared_error)
+    if cumulant_results is not None:
+        comparison_ys.extend(result.log_squared_error for result in cumulant_results)
     y_min, y_max = min(comparison_ys), max(comparison_ys)
     y_padding = 0.08 * max(y_max - y_min, 1.0)
     y_min -= y_padding
@@ -355,9 +1172,13 @@ def write_svg(
     plot_height = height - margin_top - margin_bottom
 
     def sx(x: float) -> float:
+        if math.isclose(x_min, x_max):
+            return margin_left + plot_width / 2
         return margin_left + (x - x_min) / (x_max - x_min) * plot_width
 
     def sy(y: float) -> float:
+        if math.isclose(y_min, y_max):
+            return margin_top + plot_height / 2
         return margin_top + (y_max - y) / (y_max - y_min) * plot_height
 
     points = [(sx(x), sy(y)) for x, y in zip(xs, ys)]
@@ -382,7 +1203,6 @@ def write_svg(
         ".axis { stroke: #172033; stroke-width: 1.4; }",
         ".shade { fill: #1f77b4; opacity: 0.18; }",
         ".line { fill: none; stroke: #1f77b4; stroke-width: 3; }",
-        ".cumulant-line { fill: none; stroke: #2ca02c; stroke-width: 3; stroke-dasharray: 10 7; }",
         ".point { fill: #d62728; stroke: white; stroke-width: 1.5; }",
         ".legend { font-size: 14px; fill: #263447; }",
         "</style>",
@@ -416,17 +1236,63 @@ def write_svg(
     parts.append(f'<polyline class="line" points="{polyline}"/>')
     for x, y in points:
         parts.append(f'<circle class="point" cx="{x:.2f}" cy="{y:.2f}" r="4.5"/>')
-    if cumulant_result is not None:
-        y = sy(cumulant_result.log_squared_error)
+    legend_x, legend_y = 612, 76
+    parts.extend(
+        [
+            f'<line class="line" x1="{legend_x}" y1="{legend_y}" x2="{legend_x + 42}" y2="{legend_y}"/>',
+            f'<text class="legend" x="{legend_x + 52}" y="{legend_y + 5}">sampling mean</text>',
+        ]
+    )
+    if cumulant_results is not None:
+        colors = ["#2ca02c", "#9467bd", "#ff7f0e", "#17becf", "#8c564b", "#7f7f7f"]
+        warmup_total = sum(result.warmup_seconds for result in cumulant_results)
+        run_total = sum(result.elapsed_seconds for result in cumulant_results)
         parts.extend(
             [
-                f'<line class="cumulant-line" x1="{margin_left}" y1="{y:.2f}" x2="{width - margin_right}" y2="{y:.2f}"/>',
-                '<line class="line" x1="654" y1="76" x2="704" y2="76"/>',
-                '<text class="legend" x="714" y="81">sampling mean</text>',
-                '<line class="cumulant-line" x1="654" y1="102" x2="704" y2="102"/>',
-                f'<text class="legend" x="714" y="107">cumulant propagation, orders &lt;= {cumulant_result.cumulant_k_max}</text>',
+                '<rect x="112" y="76" width="248" height="62" rx="4" fill="#ffffff" stroke="#b9c3d3" stroke-width="1"/>',
+                '<text class="legend" x="124" y="98">Cumulant timing totals</text>',
+                f'<text class="tick" x="124" y="118">warmup: {warmup_total:.2f}s</text>',
+                f'<text class="tick" x="238" y="118">timed: {run_total:.2f}s</text>',
             ]
         )
+        fixed_results = [result for result in cumulant_results if result.sample_k is None]
+        sample_results = [result for result in cumulant_results if result.sample_k is not None]
+        for index, result in enumerate(fixed_results):
+            color = colors[index % len(colors)]
+            y = sy(result.log_squared_error)
+            legend_line_y = legend_y + 24 * (index + 1)
+            parts.extend(
+                [
+                    f'<line x1="{margin_left}" y1="{y:.2f}" x2="{width - margin_right}" y2="{y:.2f}" style="fill:none;stroke:{color};stroke-width:3;stroke-dasharray:10 7"/>',
+                    f'<line x1="{legend_x}" y1="{legend_line_y}" x2="{legend_x + 42}" y2="{legend_line_y}" style="fill:none;stroke:{color};stroke-width:3;stroke-dasharray:10 7"/>',
+                    f'<text class="legend" x="{legend_x + 52}" y="{legend_line_y + 5}">{result.label}</text>',
+                ]
+            )
+        sample_groups: dict[int, list[CumulantResult]] = {}
+        for result in sample_results:
+            sample_groups.setdefault(result.cumulant_k_max, []).append(result)
+        sample_start = len(fixed_results)
+        for offset, cumulant_k_max in enumerate(sorted(sample_groups)):
+            color = colors[(sample_start + offset) % len(colors)]
+            group = sorted(sample_groups[cumulant_k_max], key=lambda result: result.sample_k or 0)
+            group_points = [
+                (sx(float(result.sample_k)), sy(result.log_squared_error))
+                for result in group
+                if result.sample_k is not None
+            ]
+            polyline = " ".join(f"{x:.2f},{y:.2f}" for x, y in group_points)
+            legend_line_y = legend_y + 24 * (sample_start + offset + 1)
+            parts.extend(
+                [
+                    f'<polyline points="{polyline}" style="fill:none;stroke:{color};stroke-width:3"/>',
+                    f'<line x1="{legend_x}" y1="{legend_line_y}" x2="{legend_x + 42}" y2="{legend_line_y}" style="fill:none;stroke:{color};stroke-width:3"/>',
+                    f'<text class="legend" x="{legend_x + 52}" y="{legend_line_y + 5}">sample avg {_propagation_label(cumulant_k_max)}</text>',
+                ]
+            )
+            for x, y in group_points:
+                parts.append(
+                    f'<circle cx="{x:.2f}" cy="{y:.2f}" r="3.8" style="fill:{color};stroke:white;stroke-width:1.2"/>'
+                )
 
     parts.extend(
         [
@@ -444,14 +1310,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n", type=int, default=128)
     parser.add_argument("--depth", type=int, default=8)
     parser.add_argument("--p", type=int, default=32)
+    parser.add_argument("--input-distribution", choices=["ica", "gaussian"], default="ica")
     parser.add_argument("--ica-seed", type=int, default=0)
+    parser.add_argument("--gaussian-seed", type=int, default=0)
     parser.add_argument("--mlp-seed", type=int, default=0)
     parser.add_argument("--true-samples", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=4096)
     parser.add_argument("--k-min", type=int, default=1)
     parser.add_argument("--k-max", type=int, default=16)
     parser.add_argument("--runs", type=int, default=10)
-    parser.add_argument("--cumulant-k-max", type=int, default=2)
+    parser.add_argument(
+        "--cumulant-orders",
+        type=_parse_cumulant_orders,
+        default=[1, 2, 3, 4],
+        help="Comma-separated propagation budgets. K=1 is mean propagation, "
+        "K=2 is covariance propagation, and higher K are cumulant propagation. "
+        "Input odd cumulants are assumed zero in this ICA experiment.",
+    )
+    parser.add_argument("--cumulant-dtype", choices=["float32", "float64"], default="float32")
+    parser.add_argument("--cumulant-factor", action="store_true")
+    parser.add_argument("--sample-cumulant-k-min", type=int, default=1)
+    parser.add_argument("--sample-cumulant-k-max", type=int, default=15)
+    parser.add_argument("--cumulant-sample-seed-base", type=int, default=2_000_000_000)
+    parser.add_argument("--sample-fourth-eig-tol", type=float, default=1e-6)
+    parser.add_argument(
+        "--skip-flop-counts",
+        action="store_true",
+        help="Skip ARC propagation FLOP counting. CSV FLOP fields for cumulant propagation will be blank.",
+    )
     parser.add_argument("--true-seed-base", type=int, default=10_000)
     parser.add_argument("--estimate-seed-base", type=int, default=1_000_000)
     parser.add_argument("--seed-stride", type=int, default=10_000)
@@ -469,22 +1355,26 @@ def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     print(f"device={args.device}", flush=True)
+    print(f"input_distribution={args.input_distribution}", flush=True)
     print(f"n={args.n} depth={args.depth} p={args.p}", flush=True)
     print(f"true_samples={args.true_samples} batch_size={args.batch_size}", flush=True)
     print(f"runs_per_k={args.runs}", flush=True)
 
-    run_results, summary_results, cumulant_result = run_experiment(args)
+    run_results, summary_results, cumulant_results = run_experiment(args)
     run_csv_path = args.output_dir / "run_results.csv"
     summary_csv_path = args.output_dir / "results.csv"
+    sampling_timing_csv_path = args.output_dir / "sampling_timing.csv"
     cumulant_csv_path = args.output_dir / "cumulant_results.csv"
     svg_path = args.output_dir / "plot_log_error_vs_k.svg"
     write_run_csv(run_results, run_csv_path)
     write_summary_csv(summary_results, summary_csv_path)
-    write_cumulant_csv(cumulant_result, cumulant_csv_path)
-    write_svg(summary_results, svg_path, cumulant_result=cumulant_result)
+    write_sampling_timing_csv(run_results, sampling_timing_csv_path)
+    write_cumulant_csv(cumulant_results, cumulant_csv_path)
+    write_svg(summary_results, svg_path, cumulant_results=cumulant_results)
 
     print(f"wrote {run_csv_path}", flush=True)
     print(f"wrote {summary_csv_path}", flush=True)
+    print(f"wrote {sampling_timing_csv_path}", flush=True)
     print(f"wrote {cumulant_csv_path}", flush=True)
     print(f"wrote {svg_path}", flush=True)
 
