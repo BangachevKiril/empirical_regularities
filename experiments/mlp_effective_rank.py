@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 from torch.nn import functional as F
 
-from data_generators import ICADataGenerator
+from data_generators import GaussianDataGenerator, ICADataGenerator
 from inference_models import DeepReLUMLP
 
 
@@ -68,12 +68,6 @@ def summarize_layer(layer: int, matrix: torch.Tensor) -> tuple[LayerRankResult, 
     return result, [float(value) for value in singular_values_cpu.tolist()]
 
 
-def make_torch_generator(device: torch.device, seed: int) -> torch.Generator:
-    generator = torch.Generator(device=device)
-    generator.manual_seed(int(seed))
-    return generator
-
-
 def sample_inputs(args: argparse.Namespace, device: torch.device) -> torch.Tensor:
     if args.input_distribution == "ica":
         data_generator = ICADataGenerator(
@@ -86,12 +80,13 @@ def sample_inputs(args: argparse.Namespace, device: torch.device) -> torch.Tenso
         return data_generator.sample(args.samples, seed_=args.sample_seed)
 
     if args.input_distribution == "gaussian":
-        return torch.randn(
-            (args.samples, args.n),
-            generator=make_torch_generator(device, args.gaussian_seed),
+        data_generator = GaussianDataGenerator(
+            n=args.n,
+            seed=args.gaussian_seed,
             device=device,
             dtype=torch.float32,
         )
+        return data_generator.sample(args.samples)
 
     raise ValueError(f"Unknown input distribution: {args.input_distribution}.")
 
