@@ -13,6 +13,7 @@ from cumulant_propagation import propagate_cumulants
 from cumulant_propagation._arc_mlp_kprop.diagslice import DSTensor
 from cumulant_propagation._arc_mlp_kprop.factor_k4 import FactoredTensor4
 from cumulant_propagation._arc_mlp_kprop.flop_utils import NamedFlopCounter
+from cumulant_propagation._arc_mlp_kprop.harmonic import HTensor
 from data_generators import GaussianDataGenerator, ICADataGenerator
 from inference_models import DeepReLUMLP
 
@@ -166,6 +167,11 @@ def _known_distribution_initialization_flops(
     rank4: int | None = None,
 ) -> int:
     flops = 2 * int(n) * int(n) * int(p)
+    if k_max == 3:
+        # Compute tau / (2n(n+2)) for the scalar d=4,r=2 input, where
+        # tau = -2 * sum_k (sum_i A[i,k]^2)^2.
+        flops += int(n) * int(p) + int(p) * max(int(n) - 1, 0)
+        flops += int(p) + max(int(p) - 1, 0) + 2
     if k_max >= 4:
         flops += 2 * int(n) * int(n) * int(p)
     return flops
@@ -326,13 +332,21 @@ def gaussian_input_cumulants(
     }
 
 
+def known_distribution_scalar_fourth_core(A: torch.Tensor) -> torch.Tensor:
+    """Normalized scalar d=4,r=2 ICA fourth-cumulant component for K=3 propagation."""
+    n = A.shape[0]
+    column_norms_squared = A.square().sum(dim=0)
+    tau = -2.0 * column_norms_squared.square().sum()
+    return tau / (2.0 * float(n) * float(n + 2))
+
+
 def known_distribution_input_cumulants(
     *,
     data_generator: ICADataGenerator,
     k_max: int,
     device: torch.device,
     dtype: torch.dtype,
-) -> dict[int, torch.Tensor | FactoredTensor4]:
+) -> dict[int, torch.Tensor | FactoredTensor4 | HTensor]:
     # ICADataGenerator samples x = r @ A.T with A shaped (n, p), so source
     # component vectors in input space are the columns of A.
     A = data_generator.A.to(device=device, dtype=dtype)
@@ -341,6 +355,12 @@ def known_distribution_input_cumulants(
         1: torch.zeros(n, device=device, dtype=dtype),
         2: A @ A.T,
     }
+    if k_max == 3:
+        cumulants[4] = HTensor(
+            core=known_distribution_scalar_fourth_core(A),
+            r=2,
+            n=n,
+        )
     if k_max >= 4:
         pair_factors = A[:, None, :] * A[None, :, :]
         cumulants[4] = FactoredTensor4(
