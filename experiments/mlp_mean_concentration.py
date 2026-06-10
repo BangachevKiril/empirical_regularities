@@ -168,7 +168,7 @@ def _known_distribution_initialization_flops(
 ) -> int:
     flops = 2 * int(n) * int(n) * int(p)
     if k_max == 3:
-        # Compute tau / (2n(n+2)) for the scalar d=4,r=2 input, where
+        # Compute 3*tau / (n(n+2)) for the scalar d=4,r=2 input, where
         # tau = -2 * sum_k (sum_i A[i,k]^2)^2.
         flops += int(n) * int(p) + int(p) * max(int(n) - 1, 0)
         flops += int(p) + max(int(p) - 1, 0) + 2
@@ -337,7 +337,7 @@ def known_distribution_scalar_fourth_core(A: torch.Tensor) -> torch.Tensor:
     n = A.shape[0]
     column_norms_squared = A.square().sum(dim=0)
     tau = -2.0 * column_norms_squared.square().sum()
-    return tau / (2.0 * float(n) * float(n + 2))
+    return 3.0 * tau / (float(n) * float(n + 2))
 
 
 def known_distribution_input_cumulants(
