@@ -13,6 +13,7 @@ COLORS = {
     "K4 old": "#d62728",
     "K4 direct-Z": "#2ca02c",
 }
+SERIES_ORDER = ["sampling", "K4 old", "K4 direct-Z"]
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,18 @@ def _row_flops(row: dict[str, str]) -> float | None:
     return initialization
 
 
+def _k4_direct_no_data_prop_flops(*, n: int, depth: int, sample_count: int) -> int:
+    # Excludes ICA sample generation/data initialization. The 4 m n^2 + 7 n^2
+    # term is direct-Z K4 plus covariance construction. The propagation term is
+    # the rank-dependent part of the repo's factored K4 FLOP counter, calibrated
+    # from small ranks and independent of p.
+    n_i = int(n)
+    m_i = int(sample_count)
+    construction = 4 * m_i * n_i * n_i + 7 * n_i * n_i
+    propagation = int(depth) * m_i * (16 * n_i**3 + 14 * n_i**2 + 2 * n_i)
+    return construction + propagation
+
+
 def _read_sampling(result_dir: Path) -> list[Point]:
     points: list[Point] = []
     with (result_dir / "results.csv").open(newline="") as handle:
@@ -56,7 +69,13 @@ def _read_sampling(result_dir: Path) -> list[Point]:
     return sorted(points, key=lambda point: point.samples)
 
 
-def _read_k4(result_dir: Path) -> list[Point]:
+def _read_k4(
+    result_dir: Path,
+    *,
+    flop_mode: str,
+    n: int | None,
+    depth: int | None,
+) -> list[Point]:
     method_labels = {
         "unknown_a": "K4 old",
         "unknown_a_old": "K4 old",
@@ -70,7 +89,22 @@ def _read_k4(result_dir: Path) -> list[Point]:
             if int(row["cumulant_k_max"]) != 4 or not row.get("sample_count"):
                 continue
             samples = _positive_float(row.get("sample_count"))
-            flops = _row_flops(row)
+            if (
+                flop_mode == "no-data-k4-prop"
+                and row["method"] == "unknown_a_direct"
+                and samples is not None
+            ):
+                if n is None or depth is None:
+                    raise ValueError("--n and --depth are required for no-data-k4-prop FLOPs.")
+                flops = float(
+                    _k4_direct_no_data_prop_flops(
+                        n=n,
+                        depth=depth,
+                        sample_count=int(samples),
+                    )
+                )
+            else:
+                flops = _row_flops(row)
             error = _positive_float(row.get("squared_error"))
             if samples is None or flops is None or error is None:
                 continue
@@ -192,9 +226,10 @@ def _draw_svg(
         ]
     )
 
+    series_order = [label for label in SERIES_ORDER if any(point.label == label for point in points)]
     legend_x = left + 18
     legend_y = 86
-    for index, label in enumerate(["sampling", "K4 old", "K4 direct-Z"]):
+    for index, label in enumerate(series_order):
         color = COLORS[label]
         x = legend_x + index * 220
         parts.extend(
@@ -205,7 +240,7 @@ def _draw_svg(
             ]
         )
 
-    for label in ["sampling", "K4 old", "K4 direct-Z"]:
+    for label in series_order:
         series = [point for point in points if point.label == label]
         if not series:
             continue
@@ -224,16 +259,36 @@ def _draw_svg(
     output.write_text("\n".join(parts))
 
 
-def write_plots(*, result_dir: Path, output_dir: Path, title_prefix: str) -> list[Path]:
+def write_plots(
+    *,
+    result_dir: Path,
+    output_dir: Path,
+    title_prefix: str,
+    hide_old: bool = False,
+    flop_mode: str = "csv",
+    n: int | None = None,
+    depth: int | None = None,
+) -> list[Path]:
     sampling = _read_sampling(result_dir)
-    k4_points = _read_k4(result_dir)
+    k4_points = _read_k4(result_dir, flop_mode=flop_mode, n=n, depth=depth)
+    if hide_old:
+        k4_points = [point for point in k4_points if point.label != "K4 old"]
     points = [*sampling, *k4_points]
     labels = {point.label for point in points}
-    missing = {"sampling", "K4 old", "K4 direct-Z"} - labels
+    required = {"sampling", "K4 direct-Z"} if hide_old else {"sampling", "K4 old", "K4 direct-Z"}
+    missing = required - labels
     if missing:
         raise ValueError(f"Missing required series: {', '.join(sorted(missing))}")
 
-    subtitle = "Log-log axes; FLOPs use total_flops when present, otherwise initialization_flops."
+    if flop_mode == "no-data-k4-prop":
+        subtitle = (
+            "Log-log axes; FLOPs exclude ICA data generation. "
+            "K4 direct-Z uses 4mn^2 + 7n^2 + Lm(16n^3 + 14n^2 + 2n)."
+        )
+        xlabel = "FLOPs excluding data initialization"
+    else:
+        subtitle = "Log-log axes; FLOPs use total_flops when present, otherwise initialization_flops."
+        xlabel = "FLOPs"
     outputs = [
         output_dir / "k4_factorization_error_vs_flops.svg",
         output_dir / "k4_factorization_error_vs_samples.svg",
@@ -243,7 +298,7 @@ def write_plots(*, result_dir: Path, output_dir: Path, title_prefix: str) -> lis
         output=outputs[0],
         title=f"{title_prefix}: Error vs FLOPs",
         subtitle=subtitle,
-        xlabel="FLOPs",
+        xlabel=xlabel,
         ylabel="squared error",
         points=points,
         x_value=lambda point: point.flops,
@@ -267,7 +322,7 @@ def write_plots(*, result_dir: Path, output_dir: Path, title_prefix: str) -> lis
         output=outputs[2],
         title=f"{title_prefix}: Samples vs FLOPs",
         subtitle=subtitle,
-        xlabel="FLOPs",
+        xlabel=xlabel,
         ylabel="samples m",
         points=points,
         x_value=lambda point: point.flops,
@@ -283,12 +338,25 @@ def main() -> None:
     parser.add_argument("--result-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--title-prefix", default="Unknown-A ICA K4 factorization")
+    parser.add_argument("--hide-old", action="store_true", help="omit the old K4 factorization series")
+    parser.add_argument(
+        "--flop-mode",
+        choices=["csv", "no-data-k4-prop"],
+        default="csv",
+        help="FLOP accounting for the x axis.",
+    )
+    parser.add_argument("--n", type=int, help="network width for no-data-k4-prop FLOPs")
+    parser.add_argument("--depth", type=int, help="network depth for no-data-k4-prop FLOPs")
     args = parser.parse_args()
 
     outputs = write_plots(
         result_dir=args.result_dir,
         output_dir=args.output_dir,
         title_prefix=args.title_prefix,
+        hide_old=args.hide_old,
+        flop_mode=args.flop_mode,
+        n=args.n,
+        depth=args.depth,
     )
     for output in outputs:
         print(output)
