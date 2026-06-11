@@ -23,6 +23,9 @@ from data_generators.gaussian_lowrank import (
     known_parameter_estimation as gaussian_lowrank_known_estimation,
 )
 from data_generators.ica import known_parameter_estimation as ica_known_estimation
+from data_generators.ica import (
+    unknown_parameter_estimation_direct_k4 as ica_unknown_direct_k4_estimation,
+)
 from data_generators.ica import unknown_parameter_estimation as ica_unknown_estimation
 from inference_models import DeepReLUMLP
 
@@ -187,7 +190,8 @@ known_distribution_input_cumulants = ica_known_estimation.input_cumulants
 known_lowrank_gaussian_input_cumulants = gaussian_lowrank_known_estimation.input_cumulants
 sample_average_input_cumulants = ica_known_estimation.sample_average_input_cumulants
 unknown_a_tau_raw_estimate = ica_unknown_estimation.tau_raw_estimate
-unknown_a_input_cumulants = ica_unknown_estimation.input_cumulants
+unknown_a_input_cumulants = ica_unknown_direct_k4_estimation.input_cumulants
+unknown_a_direct_k4_input_cumulants = ica_unknown_direct_k4_estimation.input_cumulants
 
 
 def stream_mlp_mean(
@@ -304,6 +308,8 @@ def _run_cumulant_once(
     build_cumulants,
 ) -> tuple[float, int | None]:
     cumulants, rank4 = build_cumulants()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     mean = cumulant_propagation_mean(
         model=model,
         cumulants=cumulants,
@@ -513,30 +519,46 @@ def run_cumulant_experiments(
         sample_count: int,
         seed: int,
     ):
+        def unknown_a_jobs():
+            if args.input_distribution != "ica":
+                yield (
+                    "unknown_parameter",
+                    unknown_estimation,
+                )
+                return
+            if cumulant_k_max < 4 or args.unknown_a_k4_factorization == "old":
+                yield ("unknown_a", unknown_estimation)
+                return
+            if args.unknown_a_k4_factorization == "direct":
+                yield ("unknown_a_direct", ica_unknown_direct_k4_estimation)
+                return
+            yield ("unknown_a_old", unknown_estimation)
+            yield ("unknown_a_direct", ica_unknown_direct_k4_estimation)
+
         if args.parameter_estimation == "known":
             return
         if args.parameter_estimation == "unknown":
-            method_name = "unknown_a" if args.input_distribution == "ica" else "unknown_parameter"
-            yield (
-                method_name,
-                lambda method_k=cumulant_k_max, count=sample_count, seed_=seed, module=unknown_estimation: module.input_cumulants(
-                    data_generator=data_generator,
-                    m=count,
-                    seed=seed_,
-                    k_max=method_k,
-                    device=device,
-                    dtype=dtype,
-                    eig_tol=args.sample_fourth_eig_tol,
-                    gram_chunk_size=args.unknown_a_gram_chunk_size,
-                ),
-                lambda rank4, method_k=cumulant_k_max, count=sample_count, module=unknown_estimation: module.initialization_flops(
-                    n=args.n,
-                    p=args.p,
-                    sample_count=count,
-                    k_max=method_k,
-                    rank4=rank4,
-                ),
-            )
+            for method_name, module in unknown_a_jobs():
+                yield (
+                    method_name,
+                    lambda method_k=cumulant_k_max, count=sample_count, seed_=seed, module=module: module.input_cumulants(
+                        data_generator=data_generator,
+                        m=count,
+                        seed=seed_,
+                        k_max=method_k,
+                        device=device,
+                        dtype=dtype,
+                        eig_tol=args.sample_fourth_eig_tol,
+                        gram_chunk_size=args.unknown_a_gram_chunk_size,
+                    ),
+                    lambda rank4, method_k=cumulant_k_max, count=sample_count, module=module: module.initialization_flops(
+                        n=args.n,
+                        p=args.p,
+                        sample_count=count,
+                        k_max=method_k,
+                        rank4=rank4,
+                    ),
+                )
             return
 
         if args.input_distribution == "gaussian":
@@ -583,26 +605,27 @@ def run_cumulant_experiments(
                 ),
             )
         if args.sample_cumulant_estimator in {"unknown_a", "both"}:
-            yield (
-                "unknown_a",
-                lambda method_k=cumulant_k_max, count=sample_count, seed_=seed, module=unknown_estimation: module.input_cumulants(
-                    data_generator=data_generator,
-                    m=count,
-                    seed=seed_,
-                    k_max=method_k,
-                    device=device,
-                    dtype=dtype,
-                    eig_tol=args.sample_fourth_eig_tol,
-                    gram_chunk_size=args.unknown_a_gram_chunk_size,
-                ),
-                lambda rank4, method_k=cumulant_k_max, count=sample_count, module=unknown_estimation: module.initialization_flops(
-                    n=args.n,
-                    p=args.p,
-                    sample_count=count,
-                    k_max=method_k,
-                    rank4=rank4,
-                ),
-            )
+            for method_name, module in unknown_a_jobs():
+                yield (
+                    method_name,
+                    lambda method_k=cumulant_k_max, count=sample_count, seed_=seed, module=module: module.input_cumulants(
+                        data_generator=data_generator,
+                        m=count,
+                        seed=seed_,
+                        k_max=method_k,
+                        device=device,
+                        dtype=dtype,
+                        eig_tol=args.sample_fourth_eig_tol,
+                        gram_chunk_size=args.unknown_a_gram_chunk_size,
+                    ),
+                    lambda rank4, method_k=cumulant_k_max, count=sample_count, module=module: module.initialization_flops(
+                        n=args.n,
+                        p=args.p,
+                        sample_count=count,
+                        k_max=method_k,
+                        rank4=rank4,
+                    ),
+                )
 
     def fixed_initialization_flops(
         *,
@@ -1227,6 +1250,14 @@ def parse_args() -> argparse.Namespace:
         help="Compatibility option for unknown-A estimators; current implementation avoids dense sample-Gram chunks.",
     )
     parser.add_argument(
+        "--unknown-a-k4-factorization",
+        choices=["old", "direct", "both"],
+        default="direct",
+        help="Unknown-A ICA K=4 factorization. direct uses Z[a,b,i] = x_i[a] x_i[b] "
+        "and is the default; old uses the compressed pair-Gram/eigendecomposition path; "
+        "both emits both methods.",
+    )
+    parser.add_argument(
         "--skip-flop-counts",
         action="store_true",
         help="Skip ARC propagation FLOP counting. CSV FLOP fields for cumulant propagation will be blank.",
@@ -1255,6 +1286,7 @@ def main() -> None:
     print(f"runs_per_k={args.runs}", flush=True)
     print(f"fixed_cumulant_methods={args.fixed_cumulant_methods}", flush=True)
     print(f"sample_cumulant_estimator={args.sample_cumulant_estimator}", flush=True)
+    print(f"unknown_a_k4_factorization={args.unknown_a_k4_factorization}", flush=True)
 
     run_results, summary_results, cumulant_results = run_experiment(args)
     run_csv_path = args.output_dir / "run_results.csv"
