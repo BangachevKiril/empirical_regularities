@@ -406,7 +406,7 @@ def factored_nonlin_kprop_k4(
             assert WK[d].r == 0
             ret = diagslice(WK[d].core, part)
         elif d == 4:
-            assert isinstance(WK[d], FactoredTensor4)
+            assert hasattr(WK[d], "get_dslice")
             ret = diagslice(WK[d], part, output_zero_repeated=use_pK)
         else:
             assert d in [5, 6]
@@ -424,7 +424,7 @@ def factored_nonlin_kprop_k4(
 
     # (1, 1, 1, 1) contrib
     if 4 in WK:
-        assert isinstance(WK[4], FactoredTensor4)
+        assert hasattr(WK[4], "contract_wick_")
         pK_1111 = WK[4].clone()
         pK_1111.contract_wick_(w(1))
     else:
