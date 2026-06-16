@@ -1,0 +1,52 @@
+computed true mean from 1073741824 samples (forward=13.78s)
+K=4 k=1 m=2 log_sq_error= 2.164378 cov=0.00s prop=31.48s
+K=4 k=2 m=4 log_sq_error= 2.160377 cov=0.00s prop=0.72s
+K=4 k=3 m=8 log_sq_error= 2.159381 cov=0.00s prop=0.72s
+K=4 k=4 m=16 log_sq_error= 2.099782 cov=0.00s prop=0.71s
+K=4 k=5 m=32 log_sq_error= 2.215393 cov=0.00s prop=0.72s
+K=4 k=6 m=64 log_sq_error= 1.783010 cov=0.00s prop=0.72s
+K=4 k=7 m=128 log_sq_error= 1.863675 cov=0.00s prop=0.73s
+K=4 k=8 m=256 log_sq_error= 1.524268 cov=0.00s prop=0.72s
+K=4 k=9 m=512 log_sq_error= 1.059254 cov=0.00s prop=0.72s
+K=4 k=10 m=1024 log_sq_error= 0.888832 cov=0.00s prop=0.72s
+K=4 k=11 m=2048 log_sq_error= 0.102431 cov=0.00s prop=0.72s
+K=4 k=12 m=4096 log_sq_error=-0.274313 cov=0.00s prop=0.72s
+K=4 k=13 m=8192 log_sq_error=-0.907096 cov=0.00s prop=0.73s
+K=4 k=14 m=16384 log_sq_error=-2.316639 cov=0.00s prop=0.72s
+K=4 k=15 m=32768 log_sq_error=-1.982051 cov=0.00s prop=0.73s
+K=4 k=16 m=65536 log_sq_error=-2.788767 cov=0.00s prop=0.73s
+K=4 k=17 m=131072 log_sq_error=-3.549556 cov=0.00s prop=0.73s
+K=4 k=18 m=262144 log_sq_error=-4.457407 cov=0.00s prop=0.73s
+K=4 k=19 m=524288 log_sq_error=-4.004562 cov=0.01s prop=0.72s
+K=4 k=20 m=1048576 log_sq_error=-4.695721 cov=0.01s prop=0.72s
+K=4 k=21 m=2097152 log_sq_error=-4.862820 cov=0.03s prop=0.72s
+K=4 k=22 m=4194304 log_sq_error=-4.785524 cov=0.06s prop=0.72s
+K=4 k=23 m=8388608 log_sq_error=-4.792779 cov=0.11s prop=0.73s
+K=4 k=24 m=16777216 log_sq_error=-4.736949 cov=0.22s prop=0.73s
+K=4 k=25 m=33554432 log_sq_error=-4.752310 cov=0.43s prop=0.72s
+sampling k=1 m=2 log_sq_error= 8.577637 forward=0.00s
+sampling k=2 m=4 log_sq_error= 8.046948 forward=0.00s
+sampling k=3 m=8 log_sq_error= 7.093731 forward=0.00s
+sampling k=4 m=16 log_sq_error= 6.388501 forward=0.00s
+sampling k=5 m=32 log_sq_error= 5.498531 forward=0.00s
+sampling k=6 m=64 log_sq_error= 5.147974 forward=0.00s
+sampling k=7 m=128 log_sq_error= 4.054369 forward=0.00s
+sampling k=8 m=256 log_sq_error= 3.548748 forward=0.00s
+sampling k=9 m=512 log_sq_error= 2.524331 forward=0.00s
+sampling k=10 m=1024 log_sq_error= 2.522199 forward=0.00s
+sampling k=11 m=2048 log_sq_error= 2.228336 forward=0.00s
+sampling k=12 m=4096 log_sq_error= 0.883865 forward=0.00s
+sampling k=13 m=8192 log_sq_error= 0.204429 forward=0.00s
+sampling k=14 m=16384 log_sq_error=-0.590812 forward=0.00s
+sampling k=15 m=32768 log_sq_error=-0.732414 forward=0.00s
+sampling k=16 m=65536 log_sq_error=-2.323746 forward=0.00s
+sampling k=17 m=131072 log_sq_error=-2.391312 forward=0.00s
+sampling k=18 m=262144 log_sq_error=-3.380006 forward=0.00s
+sampling k=19 m=524288 log_sq_error=-4.580172 forward=0.01s
+sampling k=20 m=1048576 log_sq_error=-4.618185 forward=0.01s
+sampling k=21 m=2097152 log_sq_error=-5.237753 forward=0.03s
+sampling k=22 m=4194304 log_sq_error=-6.101655 forward=0.05s
+sampling k=23 m=8388608 log_sq_error=-6.743885 forward=0.11s
+sampling k=24 m=16777216 log_sq_error=-7.467411 forward=0.21s
+sampling k=25 m=33554432 log_sq_error=-7.961578 forward=0.43s
+wrote plots to results/hard2_k4_sampling_n128_p256_L4_k25_true2p30/plots

@@ -1,0 +1,27 @@
+loaded true mean from results/hard2_k4_sampling_n128_p256_L4_k25_true2p30/true_mean.pt
+rank0-optimal k=1 m=2 log_sq_error= 2.172109 cov=0.09s prop=31.10s
+rank0-optimal k=2 m=4 log_sq_error= 2.168760 cov=0.00s prop=0.10s
+rank0-optimal k=3 m=8 log_sq_error= 2.164282 cov=0.00s prop=0.10s
+rank0-optimal k=4 m=16 log_sq_error= 2.107356 cov=0.00s prop=0.10s
+rank0-optimal k=5 m=32 log_sq_error= 2.219601 cov=0.00s prop=0.10s
+rank0-optimal k=6 m=64 log_sq_error= 1.784979 cov=0.00s prop=0.10s
+rank0-optimal k=7 m=128 log_sq_error= 1.870824 cov=0.00s prop=0.10s
+rank0-optimal k=8 m=256 log_sq_error= 1.545334 cov=0.00s prop=0.10s
+rank0-optimal k=9 m=512 log_sq_error= 1.073283 cov=0.00s prop=0.10s
+rank0-optimal k=10 m=1024 log_sq_error= 0.880243 cov=0.00s prop=0.10s
+rank0-optimal k=11 m=2048 log_sq_error= 0.086340 cov=0.00s prop=0.10s
+rank0-optimal k=12 m=4096 log_sq_error=-0.215733 cov=0.00s prop=0.10s
+rank0-optimal k=13 m=8192 log_sq_error=-0.799735 cov=0.00s prop=0.10s
+rank0-optimal k=14 m=16384 log_sq_error=-2.194644 cov=0.00s prop=0.10s
+rank0-optimal k=15 m=32768 log_sq_error=-1.871038 cov=0.00s prop=0.10s
+rank0-optimal k=16 m=65536 log_sq_error=-2.755113 cov=0.00s prop=0.10s
+rank0-optimal k=17 m=131072 log_sq_error=-3.102018 cov=0.00s prop=0.10s
+rank0-optimal k=18 m=262144 log_sq_error=-3.526556 cov=0.00s prop=0.10s
+rank0-optimal k=19 m=524288 log_sq_error=-3.495634 cov=0.01s prop=0.10s
+rank0-optimal k=20 m=1048576 log_sq_error=-3.800145 cov=0.02s prop=0.10s
+rank0-optimal k=21 m=2097152 log_sq_error=-3.822830 cov=0.03s prop=0.10s
+rank0-optimal k=22 m=4194304 log_sq_error=-3.796168 cov=0.06s prop=0.10s
+rank0-optimal k=23 m=8388608 log_sq_error=-3.828216 cov=0.11s prop=0.10s
+rank0-optimal k=24 m=16777216 log_sq_error=-3.769819 cov=0.22s prop=0.10s
+rank0-optimal k=25 m=33554432 log_sq_error=-3.796875 cov=0.43s prop=0.10s
+wrote plots to results/rank0_optimal_sumlek_comparison_n128_p256_L4_k25_true2p30/plots
