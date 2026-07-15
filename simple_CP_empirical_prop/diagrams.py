@@ -10,10 +10,8 @@ from fractions import Fraction
 
 from .combinatorics import (
     is_connected,
-    is_mixed,
     vec_part_coef,
     vector_partition_weight,
-    vector_partitions,
 )
 
 
@@ -31,6 +29,56 @@ def _owners(block: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(vertex for vertex, count in enumerate(block) for _ in range(count))
 
 
+def _block_support_size(block: tuple[int, ...]) -> int:
+    return sum(1 for count in block if count)
+
+
+def _allowed_blocks(
+    k_vec: tuple[int, ...], k_max: int
+) -> tuple[tuple[int, ...], ...]:
+    ranges = [range(k + 1) for k in k_vec]
+    blocks: list[tuple[int, ...]] = []
+    for block in itertools.product(*ranges):
+        block_order = sum(block)
+        if block_order == 0 or block_order > k_max:
+            continue
+        support_size = _block_support_size(block)
+        if support_size > 2:
+            continue
+        # The PDF's cDia[<=2](k) removes local singleton and local pair blocks,
+        # because the reference Gaussian already matches the preactivation mean
+        # and marginal variance. Local higher cumulants remain eligible.
+        if support_size == 1 and block_order <= 2:
+            continue
+        blocks.append(tuple(block))
+    return tuple(sorted(blocks, key=lambda b: (sum(b), b)))
+
+
+def _constrained_vector_partitions(
+    k_vec: tuple[int, ...], k_max: int
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """Generate only mixed block-order-truncated vector partitions."""
+    if not any(k_vec):
+        return ((),)
+    blocks = _allowed_blocks(k_vec, k_max)
+
+    def rec(
+        remaining: tuple[int, ...], min_index: int
+    ) -> list[tuple[tuple[int, ...], ...]]:
+        if not any(remaining):
+            return [()]
+        out: list[tuple[tuple[int, ...], ...]] = []
+        for idx in range(min_index, len(blocks)):
+            block = blocks[idx]
+            if all(block[j] <= remaining[j] for j in range(len(k_vec))):
+                new_remaining = tuple(remaining[j] - block[j] for j in range(len(k_vec)))
+                for suffix in rec(new_remaining, idx):
+                    out.append((block, *suffix))
+        return out
+
+    return tuple(rec(k_vec, 0))
+
+
 @lru_cache(maxsize=None)
 def build_diagram_catalog(
     output_order: int, k_max: int, hermite_degree: int
@@ -44,14 +92,10 @@ def build_diagram_catalog(
         raise ValueError("hermite_degree must be nonnegative")
     specs: list[DiagramSpec] = []
     for k_vec in itertools.product(range(hermite_degree + 1), repeat=output_order):
-        for part in vector_partitions(tuple(k_vec)):
+        for part in _constrained_vector_partitions(tuple(k_vec), k_max):
             if not is_connected(part, d=output_order):
                 continue
-            if not is_mixed(part, m=2):
-                continue
             block_orders = tuple(sum(block) for block in part)
-            if any(order > k_max for order in block_orders):
-                continue
             fiber_count = vec_part_coef(part, divide_fac=False)
             denominator = math.prod(math.factorial(k) for k in k_vec)
             coefficient = Fraction(fiber_count, denominator)

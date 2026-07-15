@@ -69,6 +69,59 @@ def polynomial_wick_spec(poly: Polynomial, *, name: str = "polynomial") -> Activ
     )
 
 
+def _probabilists_hermite(order: int, x: Tensor) -> Tensor:
+    if order == 0:
+        return torch.ones_like(x)
+    if order == 1:
+        return x
+    prev = torch.ones_like(x)
+    cur = x
+    for degree in range(1, order):
+        prev, cur = cur, x * cur - degree * prev
+    return cur
+
+
+def relu_wick_coef(mean: Tensor, variance: Tensor, k: int) -> Tensor:
+    """Return E[d^k/dx^k ReLU(Z)] for Z ~ N(mean, variance).
+
+    For k >= 2 this uses distributional derivatives:
+    ReLU'' = delta_0 and ReLU^(k) = delta_0^(k-2).
+    """
+    if k < 0:
+        raise ValueError("k must be nonnegative")
+    sigma = variance.sqrt()
+    alpha = mean / sigma
+    inv_sqrt_2 = 1.0 / math.sqrt(2.0)
+    inv_sqrt_2pi = 1.0 / math.sqrt(2.0 * math.pi)
+    pdf = torch.exp(-0.5 * alpha.square()) * inv_sqrt_2pi
+    cdf = 0.5 * (1.0 + torch.erf(alpha * inv_sqrt_2))
+    if k == 0:
+        return sigma * pdf + mean * cdf
+    if k == 1:
+        return cdf
+    derivative_order = k - 2
+    return pdf * _probabilists_hermite(derivative_order, -alpha) / sigma.pow(
+        derivative_order + 1
+    )
+
+
+def relu_wick_spec(hermite_degree_cap: int) -> ActivationWickSpec:
+    if hermite_degree_cap <= 0:
+        raise ValueError("hermite_degree_cap must be positive for ReLU")
+
+    def coefficient_fn(mean: Tensor, variance: Tensor, k: int) -> Tensor:
+        if k > hermite_degree_cap:
+            return torch.zeros_like(mean)
+        return relu_wick_coef(mean, variance, k)
+
+    return ActivationWickSpec(
+        name="relu_experimental",
+        degree=hermite_degree_cap,
+        coefficient_fn=coefficient_fn,
+        exact_polynomial=False,
+    )
+
+
 def activation_spec_from_name(
     name: str,
     *,
@@ -86,10 +139,10 @@ def activation_spec_from_name(
         return polynomial_wick_spec(Polynomial([0.0, 0.0, 1.0]), name="square")
     if lowered == "cube":
         return polynomial_wick_spec(Polynomial([0.0, 0.0, 0.0, 1.0]), name="cube")
+    if lowered == "relu" and allow_nonpolynomial and hermite_degree_cap is not None:
+        return relu_wick_spec(hermite_degree_cap)
     if allow_nonpolynomial and hermite_degree_cap is not None:
-        raise NotImplementedError(
-            "experimental non-polynomial quadrature is not implemented in this folder"
-        )
+        raise NotImplementedError("only experimental ReLU is implemented")
     raise ValueError(
         f"activation {name!r} is not an exact built-in polynomial; pass a Polynomial"
     )

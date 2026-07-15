@@ -35,6 +35,10 @@ arithmetic and excludes RNG, indexing, memory movement, allocation, and Python
 overhead. For the fused nonlinear path, nonlinear counts are expected FLOPs over
 diagram sampling.
 
+An experimental ReLU path is available only when `allow_nonpolynomial=True` and
+`hermite_degree_cap` is set. It uses distributional ReLU Wick coefficients and
+does not carry the finite-polynomial theorem guarantee.
+
 Run the focused tests from the repository parent with:
 
 ```bash

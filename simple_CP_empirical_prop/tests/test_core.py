@@ -107,6 +107,14 @@ class OrdinaryCPTests(unittest.TestCase):
         self.assertEqual(cat1[0].blocks, ())
         self.assertEqual(len(cat2), 0)
 
+    def test_catalog_excludes_local_singleton_and_pair_blocks(self) -> None:
+        order_one_degree_two = build_diagram_catalog(1, 2, 2)
+        self.assertEqual(len(order_one_degree_two), 1)
+        self.assertEqual(order_one_degree_two[0].blocks, ())
+        order_two_degree_one = build_diagram_catalog(2, 2, 1)
+        self.assertEqual(len(order_two_degree_one), 1)
+        self.assertEqual(order_two_degree_one[0].blocks, ((1, 1),))
+
     def test_diagram_occurrences_are_sampled_independently(self) -> None:
         spec = DiagramSpec(
             output_order=1,

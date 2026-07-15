@@ -18,7 +18,13 @@ from .config import (
 )
 from .diagrams import DiagramSpec, build_diagram_catalog
 from .flops import FLOP_CONVENTION
-from .hermite import ActivationWickSpec, activation_spec_from_name, polynomial_wick_spec
+from .hermite import (
+    ActivationWickSpec,
+    activation_spec_from_name,
+    polynomial_wick_spec,
+    relu_wick_coef,
+    relu_wick_spec,
+)
 from .initialization import initialize_cumulant_cp, initialize_tower
 from .linear import linear_cp, linear_tower
 from .moments import mean_and_variance
@@ -51,6 +57,8 @@ __all__ = [
     "nonlinear_tower",
     "ordinary_cp_mlp",
     "polynomial_wick_spec",
+    "relu_wick_coef",
+    "relu_wick_spec",
     "propagate_linear_activation_stages",
     "rank_from_delta",
     "reference_compress_cp_sources",
