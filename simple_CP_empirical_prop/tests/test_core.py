@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import math
 from fractions import Fraction
 
 import torch
@@ -18,6 +19,7 @@ from simple_CP_empirical_prop import (
     rank_from_delta,
     sample_diagram_cp,
 )
+from simple_CP_empirical_prop.combinatorics import set_partitions
 from simple_CP_empirical_prop.diagrams import DiagramSpec
 from simple_CP_empirical_prop.hermite import poly_wick_coef
 from simple_CP_empirical_prop.initialization import initialization_sources
@@ -172,6 +174,53 @@ class OrdinaryCPTests(unittest.TestCase):
         self.assertEqual(result.diagnostics.analytic_flops_by_stage["layer_0_linear"], 128.0)
         self.assertEqual(result.diagnostics.analytic_flops_by_stage["final_mean"], 8.0)
         self.assertEqual(result.diagnostics.total_analytic_flops, 160.0)
+
+    def test_scalar_two_square_layers_need_fourth_cumulant(self) -> None:
+        xs = [-1.0, 2.0]
+        ps = [0.3, 0.7]
+
+        def raw_moment(order: int) -> float:
+            return sum(p * x**order for p, x in zip(ps, xs))
+
+        def cumulant(order: int) -> float:
+            total = 0.0
+            for part in set_partitions(order):
+                mu = (-1) ** (len(part) - 1) * math.factorial(len(part) - 1)
+                prod = 1.0
+                for block in part:
+                    prod *= raw_moment(len(block))
+                total += mu * prod
+            return total
+
+        def retained_square_update(tower: dict[int, float], k_max: int) -> dict[int, float]:
+            mean = torch.tensor([tower[1]], dtype=torch.float64)
+            var = torch.tensor([tower[2]], dtype=torch.float64)
+            poly = Polynomial([0.0, 0.0, 1.0])
+            wick = {k: poly_wick_coef(poly, mean, var, k).item() for k in range(3)}
+            new = {}
+            for order in range(1, k_max + 1):
+                out = 0.0
+                for spec in build_diagram_catalog(order, k_max, 2):
+                    term = float(spec.coefficient)
+                    for degree in spec.hermite_degrees:
+                        term *= wick[degree]
+                    for block_order in spec.block_orders:
+                        term *= tower[block_order]
+                    out += term
+                new[order] = out
+            return new
+
+        true_final_mean = raw_moment(4)
+        outputs = {}
+        for k_max in (2, 3, 4):
+            tower = {order: cumulant(order) for order in range(1, k_max + 1)}
+            tower = retained_square_update(tower, k_max)
+            tower = retained_square_update(tower, k_max)
+            outputs[k_max] = tower[1]
+
+        self.assertGreater(abs(outputs[2] - true_final_mean), 1.0)
+        self.assertGreater(abs(outputs[3] - true_final_mean), 1.0)
+        self.assertAlmostEqual(outputs[4], true_final_mean, places=12)
 
 
 if __name__ == "__main__":
