@@ -16,6 +16,17 @@ from .config import (
     OrdinaryCPResult,
     rank_from_delta,
 )
+from .cov_prop import (
+    COV_PROP_FLOP_CONVENTION,
+    CovPropDiagnostics,
+    CovPropResult,
+    CovPropState,
+    cov_prop_activation,
+    cov_prop_linear,
+    custom_cov_prop_stages,
+    empirical_mean_covariance,
+    regular_cov_prop_stages,
+)
 from .diagrams import DiagramSpec, build_diagram_catalog
 from .flops import FLOP_CONVENTION
 from .hermite import (
@@ -46,8 +57,12 @@ from .types import CPTensor, CPTower, WeightedCPSource, validate_tower, zero_cp
 
 __all__ = [
     "ActivationWickSpec",
+    "COV_PROP_FLOP_CONVENTION",
     "CPTensor",
     "CPTower",
+    "CovPropDiagnostics",
+    "CovPropResult",
+    "CovPropState",
     "DiagramSpec",
     "FLOP_CONVENTION",
     "MeanVariance",
@@ -63,7 +78,11 @@ __all__ = [
     "activation_spec_from_name",
     "build_diagram_catalog",
     "compress_cp_sources",
+    "cov_prop_activation",
+    "cov_prop_linear",
+    "custom_cov_prop_stages",
     "derive_seed",
+    "empirical_mean_covariance",
     "empirical_mean_variance",
     "initialize_cumulant_cp",
     "initialize_tower",
@@ -81,6 +100,7 @@ __all__ = [
     "relu_wick_spec",
     "propagate_linear_activation_stages",
     "rank_from_delta",
+    "regular_cov_prop_stages",
     "reference_compress_cp_sources",
     "sample_diagram_cp",
     "validate_tower",

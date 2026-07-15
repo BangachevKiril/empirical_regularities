@@ -48,6 +48,13 @@ result.diagnostics.total_analytic_flops
 result.diagnostics.analytic_flops_by_stage
 ```
 
+The `cov_prop` module adds a custom covariance propagation baseline with a
+budget `M`: if `M >= n`, it estimates a dense empirical covariance from `M`
+samples and runs Gaussian covariance propagation; if `M < n`, it dispatches to
+the order-2 CP path. Dense ReLU covariance moments are computed with
+Gauss-Hermite bivariate moments, and the diagnostics use the same
+`total_analytic_flops` / `analytic_flops_by_stage` fields.
+
 Run the focused tests from the repository parent with:
 
 ```bash
