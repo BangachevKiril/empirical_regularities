@@ -39,6 +39,15 @@ An experimental ReLU path is available only when `allow_nonpolynomial=True` and
 `hermite_degree_cap` is set. It uses distributional ReLU Wick coefficients and
 does not carry the finite-polynomial theorem guarantee.
 
+The folder also includes `mean_prop`, a K=1-style baseline that computes the
+coordinatewise empirical mean and population variance, then propagates only
+mean and diagonal variance. Its diagnostics include:
+
+```python
+result.diagnostics.total_analytic_flops
+result.diagnostics.analytic_flops_by_stage
+```
+
 Run the focused tests from the repository parent with:
 
 ```bash

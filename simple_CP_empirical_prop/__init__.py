@@ -27,6 +27,17 @@ from .hermite import (
 )
 from .initialization import initialize_cumulant_cp, initialize_tower
 from .linear import linear_cp, linear_tower
+from .mean_prop import (
+    MEAN_PROP_FLOP_CONVENTION,
+    MeanPropDiagnostics,
+    MeanPropResult,
+    MeanPropState,
+    empirical_mean_variance,
+    mean_prop_activation,
+    mean_prop_linear,
+    mean_prop_mlp,
+    mean_prop_stages,
+)
 from .moments import mean_and_variance
 from .nonlinear import sample_diagram_cp, nonlinear_tower
 from .propagate import ordinary_cp_mlp, propagate_linear_activation_stages
@@ -40,6 +51,10 @@ __all__ = [
     "DiagramSpec",
     "FLOP_CONVENTION",
     "MeanVariance",
+    "MEAN_PROP_FLOP_CONVENTION",
+    "MeanPropDiagnostics",
+    "MeanPropResult",
+    "MeanPropState",
     "OrdinaryCPConfig",
     "OrdinaryCPDiagnostics",
     "OrdinaryCPResult",
@@ -49,11 +64,16 @@ __all__ = [
     "build_diagram_catalog",
     "compress_cp_sources",
     "derive_seed",
+    "empirical_mean_variance",
     "initialize_cumulant_cp",
     "initialize_tower",
     "linear_cp",
     "linear_tower",
     "mean_and_variance",
+    "mean_prop_activation",
+    "mean_prop_linear",
+    "mean_prop_mlp",
+    "mean_prop_stages",
     "nonlinear_tower",
     "ordinary_cp_mlp",
     "polynomial_wick_spec",
