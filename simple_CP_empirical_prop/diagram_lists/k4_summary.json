@@ -1,0 +1,30 @@
+{
+  "K": 4,
+  "orbit_count": 26,
+  "labelled_count": 82,
+  "by_output_order": {
+    "1": {
+      "orbits": 3,
+      "labelled": 3
+    },
+    "2": {
+      "orbits": 10,
+      "labelled": 15
+    },
+    "3": {
+      "orbits": 9,
+      "labelled": 35
+    },
+    "4": {
+      "orbits": 4,
+      "labelled": 29
+    }
+  },
+  "only_unfactorized_orbits": [
+    "k4_r3_orbit_04",
+    "k4_r4_orbit_02"
+  ],
+  "k4_default_orbits.json_sha256": "feed27fb96355fbdf3b9eb5157ffbaf1fa3633dd6e6d6af268622ffa3b27ccd8",
+  "k4_default_labelled.json_sha256": "ed5a3c90db68a2af0e5a35c9e90e7182f95434be62f6584de6ead120d2726a60",
+  "k4_table_yes_only.json_sha256": "a3e1e7f0f465a8e15f6babe0547efa732000b6b05b31a76c5a8bf53c843c01ff"
+}

@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "name": "k4_default_r1",
+  "K": 4,
+  "description": "Canonical diagram orbits transcribed from the supplied K=4 table. All 26 rows are enabled by default. Two rows retain the table annotation only_unfactorized as metadata.",
+  "coefficient_convention": "raw Wick/Hermite vectors; coefficient includes vector-partition factorial denominator and is applied exactly once per labelled member",
+  "orbit_semantics": "Expand each canonical orbit to all distinct output-vertex permutations. Do not multiply one representative by orbit_size.",
+  "retention_rule": {
+    "connected": true,
+    "mixedness": "[<=2]-mixed",
+    "max_block_order": 4,
+    "minimum_score": -3
+  },
+  "kind": "orbit_catalog",
+  "orbits": [
+    {
+      "id": "k4_r1_orbit_01",
+      "output_order": 1,
+      "notation": "∅",
+      "blocks": [],
+      "hermite_degrees": [
+        0
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 1,
+        "text": "1"
+      },
+      "block_orders": [],
+      "owners_by_block": [],
+      "score": 0,
+      "paper_cost": 1,
+      "total_hermite_degree": 0,
+      "mse_if_dropped": "O(1)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n)",
+      "orbit_size": 1,
+      "members": [
+        []
+      ]
+    },
+    {
+      "id": "k4_r1_orbit_02",
+      "output_order": 1,
+      "notation": "111",
+      "blocks": [
+        [
+          3
+        ]
+      ],
+      "hermite_degrees": [
+        3
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 6,
+        "text": "1/6"
+      },
+      "block_orders": [
+        3
+      ],
+      "owners_by_block": [
+        [
+          0,
+          0,
+          0
+        ]
+      ],
+      "score": -2,
+      "paper_cost": 3,
+      "total_hermite_degree": 3,
+      "mse_if_dropped": "O(n^-2)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n M_3)",
+      "orbit_size": 1,
+      "members": [
+        [
+          [
+            3
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "k4_r1_orbit_03",
+      "output_order": 1,
+      "notation": "1111",
+      "blocks": [
+        [
+          4
+        ]
+      ],
+      "hermite_degrees": [
+        4
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 24,
+        "text": "1/24"
+      },
+      "block_orders": [
+        4
+      ],
+      "owners_by_block": [
+        [
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "score": -2,
+      "paper_cost": 3,
+      "total_hermite_degree": 4,
+      "mse_if_dropped": "O(n^-2)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n M_4)",
+      "orbit_size": 1,
+      "members": [
+        [
+          [
+            4
+          ]
+        ]
+      ]
+    }
+  ]
+}

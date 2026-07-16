@@ -42,12 +42,10 @@ def _allowed_blocks(
         block_order = sum(block)
         if block_order == 0 or block_order > k_max:
             continue
-        support_size = _block_support_size(block)
-        if support_size > 2:
-            continue
         # The PDF's cDia[<=2](k) removes local singleton and local pair blocks,
         # because the reference Gaussian already matches the preactivation mean
         # and marginal variance. Local higher cumulants remain eligible.
+        support_size = _block_support_size(block)
         if support_size == 1 and block_order <= 2:
             continue
         blocks.append(tuple(block))

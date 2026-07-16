@@ -47,6 +47,8 @@ def _svg_star(cx: float, cy: float, radius: float, color: str) -> str:
 
 
 def write_svg_plot(path: Path, payload: dict[str, Any]) -> None:
+    width_n = payload.get("config", {}).get("n", "?")
+    layer_count = payload.get("config", {}).get("layers", "?")
     series = {
         "sampling": [
             (row["flops"], row["last_layer_rms_error"]) for row in payload["baseline"]
@@ -134,7 +136,7 @@ def write_svg_plot(path: Path, payload: dict[str, Any]) -> None:
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <rect width="100%" height="100%" fill="white" />
 <style>text {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #222; }}</style>
-<text x="{left}" y="24" font-size="20" font-weight="700">Kaiming ReLU n=256 L=4: K=1 Mean Prop and Cov Prop</text>
+<text x="{left}" y="24" font-size="20" font-weight="700">Kaiming ReLU n={width_n} L={layer_count}: K=1 Mean Prop and Cov Prop</text>
 {''.join(ticks)}
 <rect x="{left}" y="{top}" width="{plot_w}" height="{plot_h}" fill="none" stroke="#222" stroke-width="1.2" />
 {''.join(lines)}
@@ -174,6 +176,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "Linear variance propagation uses a diagonal-covariance approximation.",
             "ReLU moments use Gaussian marginal formulas.",
             "custom cov_prop uses dense empirical covariance propagation when M >= n and order-2 CP propagation when M < n.",
+            "mean_prop and cov_prop materialize/consume only min(M, m) samples; FLOPs use that consumed sample count.",
         ],
     }
 
@@ -193,8 +196,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     save_json(json_path, payload)
 
     stages = [(linear, "relu") for linear in linears]
+    prop_available_count = 2 ** args.prop_sample_power
+    payload["prop_available_sample_count"] = prop_available_count
     for power in args.sample_powers:
         count = 2**power
+        prop_used_count = min(count, prop_available_count)
         print(f"[sampling] m=2^{power}", flush=True)
         sample_means = sample_relu_means(
             linears,
@@ -215,13 +221,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
 
         gen = torch.Generator(device=device).manual_seed(args.mean_prop_seed + power)
-        samples = torch.randn(count, args.n, generator=gen, device=device, dtype=dtype)
+        samples = torch.randn(prop_used_count, args.n, generator=gen, device=device, dtype=dtype)
         with torch.no_grad():
-            result = mean_prop_stages(stages, samples, variance_min=args.variance_min)
+            result = mean_prop_stages(
+                stages,
+                samples,
+                sample_budget=count,
+                variance_min=args.variance_min,
+            )
         payload["mean_prop"].append(
             {
                 "sample_power": power,
-                "sample_count": count,
+                "available_sample_count": prop_available_count,
+                "sample_budget": count,
+                "sample_count": result.diagnostics.sample_count,
+                "used_sample_count": result.diagnostics.used_sample_count,
+                "materialized_sample_count": prop_used_count,
                 "flops": result.diagnostics.total_analytic_flops,
                 "flop_breakdown": result.diagnostics.analytic_flops_by_stage,
                 "last_layer_rms_error": rms_error(result.mean.detach().cpu(), true_last),
@@ -235,7 +250,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         print(f"[cov_prop] M=2^{power}", flush=True)
         cov_gen = torch.Generator(device=device).manual_seed(args.cov_prop_seed + power)
-        cov_samples = torch.randn(count, args.n, generator=cov_gen, device=device, dtype=dtype)
+        cov_samples = torch.randn(prop_used_count, args.n, generator=cov_gen, device=device, dtype=dtype)
         start = time.time()
         with torch.no_grad():
             cov_result = custom_cov_prop_stages(
@@ -251,7 +266,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         payload["cov_prop"].append(
             {
                 "sample_power": power,
-                "sample_count": count,
+                "available_sample_count": prop_available_count,
+                "sample_budget": count,
+                "sample_count": cov_result.diagnostics.sample_count,
+                "used_sample_count": cov_result.diagnostics.used_sample_count,
+                "materialized_sample_count": prop_used_count,
                 "rank": count,
                 "mode": cov_result.diagnostics.mode,
                 "used_cp": cov_result.diagnostics.mode == "cp",
@@ -284,6 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--true-batch-power", type=int, default=18)
     parser.add_argument("--sample-powers", type=int, nargs="+", default=[3, 6, 9, 12, 15, 18])
     parser.add_argument("--batch-power", type=int, default=18)
+    parser.add_argument("--prop-sample-power", type=int, default=18)
     parser.add_argument("--network-seed", type=int, default=123)
     parser.add_argument("--truth-seed", type=int, default=10_000)
     parser.add_argument("--baseline-seed", type=int, default=20_000)

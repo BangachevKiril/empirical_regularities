@@ -1,0 +1,743 @@
+{
+  "schema_version": 1,
+  "name": "k4_default_r4",
+  "K": 4,
+  "description": "Canonical diagram orbits transcribed from the supplied K=4 table. All 26 rows are enabled by default. Two rows retain the table annotation only_unfactorized as metadata.",
+  "coefficient_convention": "raw Wick/Hermite vectors; coefficient includes vector-partition factorial denominator and is applied exactly once per labelled member",
+  "orbit_semantics": "Expand each canonical orbit to all distinct output-vertex permutations. Do not multiply one representative by orbit_size.",
+  "retention_rule": {
+    "connected": true,
+    "mixedness": "[<=2]-mixed",
+    "max_block_order": 4,
+    "minimum_score": -3
+  },
+  "kind": "orbit_catalog",
+  "orbits": [
+    {
+      "id": "k4_r4_orbit_01",
+      "output_order": 4,
+      "notation": "1234",
+      "blocks": [
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "hermite_degrees": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 1,
+        "text": "1"
+      },
+      "block_orders": [
+        4
+      ],
+      "owners_by_block": [
+        [
+          0,
+          1,
+          2,
+          3
+        ]
+      ],
+      "score": -3,
+      "paper_cost": 4,
+      "total_hermite_degree": 4,
+      "mse_if_dropped": "O(n^-3)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n M_4 + n^4)",
+      "orbit_size": 1,
+      "members": [
+        [
+          [
+            1,
+            1,
+            1,
+            1
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "k4_r4_orbit_02",
+      "output_order": 4,
+      "notation": "12 · 234",
+      "blocks": [
+        [
+          0,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          0,
+          0
+        ]
+      ],
+      "hermite_degrees": [
+        1,
+        2,
+        1,
+        1
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 1,
+        "text": "1"
+      },
+      "block_orders": [
+        3,
+        2
+      ],
+      "owners_by_block": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "score": -3,
+      "paper_cost": 4,
+      "total_hermite_degree": 5,
+      "mse_if_dropped": "O(n^-3)",
+      "table_keep_policy": "only_unfactorized",
+      "enabled_by_default": true,
+      "time_annotation": "O(n^4)",
+      "orbit_size": 12,
+      "members": [
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            1,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            1,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            1,
+            0,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            1,
+            0,
+            1,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "k4_r4_orbit_03",
+      "output_order": 4,
+      "notation": "12 · 23 · 34",
+      "blocks": [
+        [
+          0,
+          0,
+          1,
+          1
+        ],
+        [
+          0,
+          1,
+          1,
+          0
+        ],
+        [
+          1,
+          1,
+          0,
+          0
+        ]
+      ],
+      "hermite_degrees": [
+        1,
+        2,
+        2,
+        1
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 1,
+        "text": "1"
+      },
+      "block_orders": [
+        2,
+        2,
+        2
+      ],
+      "owners_by_block": [
+        [
+          2,
+          3
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "score": -3,
+      "paper_cost": 4,
+      "total_hermite_degree": 6,
+      "mse_if_dropped": "O(n^-3)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n^4)",
+      "orbit_size": 12,
+      "members": [
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "k4_r4_orbit_04",
+      "output_order": 4,
+      "notation": "12 · 13 · 14",
+      "blocks": [
+        [
+          1,
+          0,
+          0,
+          1
+        ],
+        [
+          1,
+          0,
+          1,
+          0
+        ],
+        [
+          1,
+          1,
+          0,
+          0
+        ]
+      ],
+      "hermite_degrees": [
+        3,
+        1,
+        1,
+        1
+      ],
+      "coefficient": {
+        "numerator": 1,
+        "denominator": 1,
+        "text": "1"
+      },
+      "block_orders": [
+        2,
+        2,
+        2
+      ],
+      "owners_by_block": [
+        [
+          0,
+          3
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "score": -3,
+      "paper_cost": 4,
+      "total_hermite_degree": 6,
+      "mse_if_dropped": "O(n^-3)",
+      "table_keep_policy": "yes",
+      "enabled_by_default": true,
+      "time_annotation": "O(n^4)",
+      "orbit_size": 4,
+      "members": [
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ]
+        ],
+        [
+          [
+            0,
+            0,
+            1,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        [
+          [
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            0,
+            1,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ],
+        [
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            1,
+            0,
+            1,
+            0
+          ],
+          [
+            1,
+            1,
+            0,
+            0
+          ]
+        ]
+      ]
+    }
+  ]
+}

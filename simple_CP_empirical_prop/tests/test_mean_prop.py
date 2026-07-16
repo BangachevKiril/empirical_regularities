@@ -55,6 +55,21 @@ class MeanPropTests(unittest.TestCase):
         self.assertEqual(result.diagnostics.analytic_flops_by_stage["layer_0_linear"], 9.0)
         self.assertEqual(result.diagnostics.total_analytic_flops, 33.0)
 
+    def test_mean_prop_sample_budget_uses_only_budgeted_prefix(self) -> None:
+        samples = torch.tensor([[1.0, 2.0], [3.0, 6.0], [100.0, 200.0]])
+        linear = torch.nn.Linear(2, 1, bias=False)
+        with torch.no_grad():
+            linear.weight.copy_(torch.tensor([[2.0, -1.0]]))
+        result = mean_prop_stages([(linear, None)], samples, sample_budget=2)
+        expected = empirical_mean_variance(samples[:2])
+        self.assertEqual(result.diagnostics.available_sample_count, 3)
+        self.assertEqual(result.diagnostics.used_sample_count, 2)
+        self.assertEqual(
+            result.diagnostics.analytic_flops_by_stage["empirical_mean_variance"],
+            16.0,
+        )
+        self.assertTrue(torch.allclose(result.mean, linear.weight @ expected.mean))
+
 
 if __name__ == "__main__":
     unittest.main()

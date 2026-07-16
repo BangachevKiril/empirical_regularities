@@ -113,6 +113,26 @@ def propagate_linear_activation_stages(
     """Propagate through explicit (linear, optional activation) stages."""
     if samples.ndim != 2:
         raise ValueError("samples must have shape [m, input_dim]")
+    if config.k_max == 4:
+        from .k4 import K4OrdinaryCPConfig, propagate_k4_stages
+
+        k4_config = K4OrdinaryCPConfig(
+            variance_min=config.variance_min,
+            variance_max=config.variance_max,
+            mean_abs_clip=config.mean_abs_clip,
+            activate_final=True,
+            reference_two_stage_nonlinear=True,
+            allow_nonpolynomial=config.allow_nonpolynomial,
+            hermite_degree_cap=config.hermite_degree_cap,
+        )
+        return propagate_k4_stages(
+            stages,
+            samples,
+            rank=rank_from_delta(samples.shape[0], config.delta),
+            config=k4_config,
+            seed=seed,
+            return_all=return_all,
+        )
     if any(activation is not None for _, activation in stages) and config.k_max < 2:
         raise ValueError("hidden nonlinearities require k_max >= 2")
     rank = rank_from_delta(samples.shape[0], config.delta)
@@ -237,6 +257,28 @@ def ordinary_cp_mlp(
     elif config.k_max != k_max or config.delta != delta:
         raise ValueError("explicit k_max/delta conflict with config")
     _check_supported_mlp(mlp)
+    if k_max == 4:
+        from .k4 import K4OrdinaryCPConfig, ordinary_cp_mlp_k4
+
+        k4_config = K4OrdinaryCPConfig(
+            variance_min=config.variance_min,
+            variance_max=config.variance_max,
+            mean_abs_clip=config.mean_abs_clip,
+            activate_final=False,
+            reference_two_stage_nonlinear=True,
+            polynomial_by_layer=config.polynomial_by_layer,
+            allow_nonpolynomial=config.allow_nonpolynomial,
+            hermite_degree_cap=config.hermite_degree_cap,
+        )
+        return ordinary_cp_mlp_k4(
+            mlp,
+            samples,
+            rank=rank_from_delta(samples.shape[0], delta),
+            config=k4_config,
+            seed=seed,
+            activate_final=False,
+            return_all=return_all,
+        )
     linears, names = _linears_and_names_from_mlp(mlp)
     if not linears:
         raise ValueError("mlp must contain at least one linear layer")

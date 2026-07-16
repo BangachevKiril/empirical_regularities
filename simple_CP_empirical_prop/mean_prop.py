@@ -38,6 +38,9 @@ MEAN_PROP_FLOP_CONVENTION = (
 class MeanPropDiagnostics:
     sample_count: int
     input_width: int
+    used_sample_count: int | None = None
+    available_sample_count: int | None = None
+    sample_budget: int | None = None
     total_analytic_flops: float = 0.0
     analytic_flops_by_stage: dict[str, float] = field(default_factory=dict)
     flop_count_convention: str = MEAN_PROP_FLOP_CONVENTION
@@ -64,6 +67,18 @@ class MeanPropResult:
     layer_means: list[Tensor] | None
     layer_variances: list[Tensor] | None
     diagnostics: MeanPropDiagnostics
+
+
+def _budgeted_samples(samples: Tensor, sample_budget: int | None) -> tuple[Tensor, int]:
+    if samples.ndim != 2:
+        raise ValueError("samples must have shape [m, width]")
+    if sample_budget is None:
+        used = samples.shape[0]
+    else:
+        if not isinstance(sample_budget, int) or sample_budget < 1:
+            raise ValueError("sample_budget must be a positive integer")
+        used = min(sample_budget, samples.shape[0])
+    return samples[:used], used
 
 
 def empirical_mean_variance(samples: Tensor) -> MeanPropState:
@@ -193,19 +208,26 @@ def mean_prop_stages(
     stages: Sequence[tuple[torch.nn.Linear, str | None]],
     samples: Tensor,
     *,
+    sample_budget: int | None = None,
     variance_min: float = 1e-10,
     return_all: bool = False,
 ) -> MeanPropResult:
     """Run coordinatewise mean/variance propagation over explicit stages."""
     if samples.ndim != 2:
         raise ValueError("samples must have shape [m, width]")
+    available_sample_count = samples.shape[0]
+    samples, used_sample_count = _budgeted_samples(samples, sample_budget)
     diagnostics = MeanPropDiagnostics(
-        sample_count=samples.shape[0],
+        sample_count=used_sample_count,
         input_width=samples.shape[1],
+        used_sample_count=used_sample_count,
+        available_sample_count=available_sample_count,
+        sample_budget=sample_budget,
         notes=[
             "Tracks only coordinatewise mean and variance.",
             "Linear variance propagation assumes diagonal covariance.",
             "Activation moments assume Gaussian marginals.",
+            "Empirical initialization consumes only min(sample_budget, available samples).",
         ],
     )
     state = empirical_mean_variance(samples)
@@ -256,6 +278,7 @@ def mean_prop_mlp(
     samples: Tensor,
     *,
     activation: str = "relu",
+    sample_budget: int | None = None,
     variance_min: float = 1e-10,
     activate_final: bool = False,
     return_all: bool = False,
@@ -274,6 +297,7 @@ def mean_prop_mlp(
     return mean_prop_stages(
         stages,
         samples,
+        sample_budget=sample_budget,
         variance_min=variance_min,
         return_all=return_all,
     )

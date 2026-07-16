@@ -42,6 +42,9 @@ class CovPropDiagnostics:
     input_width: int
     rank: int
     mode: str
+    used_sample_count: int | None = None
+    available_sample_count: int | None = None
+    sample_budget: int | None = None
     total_analytic_flops: float = 0.0
     analytic_flops_by_stage: dict[str, float] = field(default_factory=dict)
     flop_count_convention: str = COV_PROP_FLOP_CONVENTION
@@ -68,6 +71,18 @@ class CovPropResult:
     layer_means: list[Tensor] | None
     layer_covariances: list[Tensor] | None
     diagnostics: CovPropDiagnostics
+
+
+def _budgeted_samples(samples: Tensor, sample_budget: int | None) -> tuple[Tensor, int]:
+    if samples.ndim != 2:
+        raise ValueError("samples must have shape [m, width]")
+    if sample_budget is None:
+        used = samples.shape[0]
+    else:
+        if not isinstance(sample_budget, int) or sample_budget < 1:
+            raise ValueError("sample_budget must be a positive integer")
+        used = min(sample_budget, samples.shape[0])
+    return samples[:used], used
 
 
 def empirical_mean_covariance(samples: Tensor) -> CovPropState:
@@ -255,6 +270,7 @@ def regular_cov_prop_stages(
     stages: Sequence[tuple[torch.nn.Linear, str | None]],
     samples: Tensor,
     *,
+    sample_budget: int | None = None,
     quadrature_degree: int = 40,
     variance_min: float = 1e-10,
     quadrature_float64: bool = True,
@@ -263,15 +279,21 @@ def regular_cov_prop_stages(
     """Run dense Gaussian covariance propagation over explicit stages."""
     if samples.ndim != 2:
         raise ValueError("samples must have shape [m, width]")
+    available_sample_count = samples.shape[0]
+    samples, used_sample_count = _budgeted_samples(samples, sample_budget)
     diagnostics = CovPropDiagnostics(
-        sample_count=samples.shape[0],
+        sample_count=used_sample_count,
         input_width=samples.shape[1],
-        rank=samples.shape[0],
+        rank=sample_budget if sample_budget is not None else used_sample_count,
         mode="dense",
+        used_sample_count=used_sample_count,
+        available_sample_count=available_sample_count,
+        sample_budget=sample_budget,
         notes=[
             "M >= n: initialized dense empirical mean/covariance.",
             "Linear covariance propagation is exact for the Gaussian state.",
             "ReLU covariance propagation uses Gauss-Hermite bivariate moments.",
+            "Empirical initialization consumes only min(sample_budget, available samples).",
         ],
     )
     state = empirical_mean_covariance(samples)
@@ -341,11 +363,14 @@ def custom_cov_prop_stages(
     requested_rank = int(rank if rank is not None else samples.shape[0])
     if requested_rank < 1:
         raise ValueError("rank must be positive")
+    available_sample_count = samples.shape[0]
+    budgeted_samples, used_sample_count = _budgeted_samples(samples, requested_rank)
     width = samples.shape[1]
     if requested_rank >= width:
         return regular_cov_prop_stages(
             stages,
             samples,
+            sample_budget=requested_rank,
             quadrature_degree=quadrature_degree,
             variance_min=variance_min,
             quadrature_float64=quadrature_float64,
@@ -369,7 +394,7 @@ def custom_cov_prop_stages(
             )
     config = OrdinaryCPConfig(
         k_max=2,
-        delta=requested_rank / samples.shape[0],
+        delta=requested_rank / used_sample_count,
         allow_nonpolynomial=True,
         hermite_degree_cap=relu_degree_cap,
         variance_min=variance_min,
@@ -378,21 +403,25 @@ def custom_cov_prop_stages(
     )
     cp_result = propagate_linear_activation_stages(
         cp_stages,
-        samples,
+        budgeted_samples,
         config=config,
         seed=cp_seed,
         return_all=return_all,
     )
     diagnostics = CovPropDiagnostics(
-        sample_count=samples.shape[0],
+        sample_count=used_sample_count,
         input_width=width,
         rank=requested_rank,
         mode="cp",
+        used_sample_count=used_sample_count,
+        available_sample_count=available_sample_count,
+        sample_budget=requested_rank,
         total_analytic_flops=cp_result.diagnostics.total_analytic_flops,
         analytic_flops_by_stage=dict(cp_result.diagnostics.analytic_flops_by_stage),
         notes=[
             "M < n: used order-2 ordinary-CP propagation as the low-rank covariance path.",
             "ReLU is represented by the configured Hermite degree cap.",
+            "CP initialization consumes only min(M, available samples).",
         ],
     )
     covariance = None

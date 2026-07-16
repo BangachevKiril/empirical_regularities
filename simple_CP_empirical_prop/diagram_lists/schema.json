@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/simple_CP_empirical_prop/diagram_lists/schema.json",
+  "title": "K=4 retained diagram orbit catalog",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "name",
+    "K",
+    "kind",
+    "orbits"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "K": {
+      "const": 4
+    },
+    "kind": {
+      "const": "orbit_catalog"
+    },
+    "orbits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "output_order",
+          "notation",
+          "blocks",
+          "coefficient",
+          "table_keep_policy",
+          "enabled_by_default"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "output_order": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4
+          },
+          "notation": {
+            "type": "string"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "coefficient": {
+            "type": "object",
+            "required": [
+              "numerator",
+              "denominator"
+            ],
+            "properties": {
+              "numerator": {
+                "type": "integer"
+              },
+              "denominator": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "text": {
+                "type": "string"
+              }
+            }
+          },
+          "table_keep_policy": {
+            "enum": [
+              "yes",
+              "only_unfactorized"
+            ]
+          },
+          "enabled_by_default": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

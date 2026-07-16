@@ -69,6 +69,31 @@ class CovPropTests(unittest.TestCase):
         cp = custom_cov_prop_stages([(cp_linear, None)], cp_samples, rank=2)
         self.assertEqual(cp.diagnostics.mode, "cp")
 
+    def test_custom_cov_prop_dense_budget_uses_only_budgeted_prefix(self) -> None:
+        samples = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 6.0],
+                [5.0, 10.0],
+                [100.0, 200.0],
+            ]
+        )
+        result = custom_cov_prop_stages([], samples, rank=3)
+        expected = empirical_mean_covariance(samples[:3])
+        self.assertEqual(result.diagnostics.mode, "dense")
+        self.assertEqual(result.diagnostics.available_sample_count, 4)
+        self.assertEqual(result.diagnostics.used_sample_count, 3)
+        self.assertTrue(torch.allclose(result.mean, expected.mean))
+        self.assertTrue(torch.allclose(result.covariance, expected.covariance))
+
+    def test_custom_cov_prop_cp_budget_uses_only_budgeted_prefix_for_flops(self) -> None:
+        samples = torch.randn(5, 4, generator=torch.Generator().manual_seed(3))
+        result = custom_cov_prop_stages([], samples, rank=2)
+        self.assertEqual(result.diagnostics.mode, "cp")
+        self.assertEqual(result.diagnostics.available_sample_count, 5)
+        self.assertEqual(result.diagnostics.used_sample_count, 2)
+        self.assertEqual(result.diagnostics.sample_budget, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
